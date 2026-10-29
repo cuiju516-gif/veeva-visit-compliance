@@ -1,0 +1,21 @@
+# Build context hygiene. A large context is not just slow: it leaks files that
+# are machine-local (session notes) or installed (dependencies) into the image.
+.git
+.tools
+.github
+bin
+coverage.out
+
+# Dependencies are installed in the image, never copied in.
+node_modules
+
+# web/dist is produced by the frontend stage, so the context must not carry a
+# stale copy that could shadow it.
+web/dist
+
+# Local-only material.
+demo
+shots
+.chrome-profile
+*.pdf
+.DS_Store

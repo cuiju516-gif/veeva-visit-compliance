@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: veeva
+      POSTGRES_PASSWORD: veeva
+      POSTGRES_DB: visits
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Published on a non-default port so the DB-backed tests can run from the
+      # host (`POSTGRES_TEST_DSN=...55432...`) without colliding with a local
+      # Postgres. The app does not need this mapping; it talks over the compose
+      # network.
+      - "55432:5432"
+    healthcheck:
+      # pg_isready is the right probe here: it answers the only question the app
+      # cares about, "can I connect", rather than "is the process up".
+      test: ["CMD-SHELL", "pg_isready -U veeva -d visits"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8080"
+      POSTGRES_DSN: postgres://veeva:veeva@db:5432/visits?sslmode=disable
+      # Both thresholds are overridable so a reviewer can demonstrate the
+      # boundary behaviour without rebuilding.
+      COMPLIANCE_MIN_DURATION_SECONDS: "300"
+      COMPLIANCE_MAX_DISTANCE_METERS: "500"
+      TZ: Asia/Shanghai
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
