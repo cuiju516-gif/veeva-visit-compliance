@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Proof of visit for pharma reps: server-timed check-in, GPS evidence and compliant call reports.">
+  <title>Field Visit Compliance</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="app-header">
+    <div class="app-header-inner">
+      <div>
+        <h1>Field Visit Compliance</h1>
+        <p class="subtitle">Plan, prove and report every HCP visit — server-timed and location-aware.</p>
+      </div>
+      <button class="btn btn-small" type="button" id="refresh" data-testid="refresh-all">Refresh</button>
+    </div>
+  </header>
+
+  <main class="layout" id="main">
+    <div class="column-left">
+      <div id="plan-root"></div>
+      <div id="list-root"></div>
+    </div>
+
+    <div class="column-right" id="detail-root"></div>
+
+    <div class="dashboard-region" id="dashboard-root"></div>
+  </main>
+
+  <noscript>
+    <p class="noscript">This application requires JavaScript.</p>
+  </noscript>
+</body>
+</html>

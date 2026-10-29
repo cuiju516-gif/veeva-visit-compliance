@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="820" viewBox="0 0 1200 820" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif">
+  <defs>
+    <marker id="a3" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#98A2B3"/></marker>
+    <marker id="a3amber" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#F79009"/></marker>
+  </defs>
+
+  <rect width="1200" height="820" fill="#FFFFFF"/>
+
+  <style>
+    .title { font-size: 17px; font-weight: 650; fill: #101828; }
+    .subtitle { font-size: 12px; fill: #667085; }
+    .box { fill: #FFFFFF; stroke: #D0D5DD; stroke-width: 1.5; }
+    .boxTerm { fill: #FFFFFF; stroke: #98A2B3; stroke-width: 2.5; }
+    .boxCount { fill: #F6FEF9; stroke: #6CE9A6; stroke-width: 2; }
+    .name { font-size: 14.5px; font-weight: 650; fill: #101828; letter-spacing: .02em; }
+    .meta { font-size: 10.5px; fill: #667085; }
+    .edge { stroke: #98A2B3; stroke-width: 1.6; fill: none; }
+    .edgeAmber { stroke: #F79009; stroke-width: 1.6; fill: none; stroke-dasharray: 6 4; }
+    .label { font-size: 11.5px; fill: #475467; paint-order: stroke; stroke: #FFFFFF; stroke-width: 4px; stroke-linejoin: round; }
+    .labelAmber { font-size: 11.5px; fill: #B54708; font-weight: 600; paint-order: stroke; stroke: #FFFFFF; stroke-width: 4px; stroke-linejoin: round; }
+    .legend { font-size: 11px; fill: #475467; }
+    .footnote { font-size: 11px; fill: #667085; }
+    .strong { font-weight: 650; fill: #344054; }
+  </style>
+
+  <text x="50" y="40" class="title">Plan 状态机</text>
+  <text x="158" y="40" class="subtitle">7 个状态 · 8 条迁移 · 完成 / 取消 / 作废 三套独立统计</text>
+
+  <g transform="translate(50,62)">
+    <line x1="0" y1="0" x2="26" y2="0" stroke="#98A2B3" stroke-width="1.6" marker-end="url(#a3)"/>
+    <text x="34" y="4" class="legend">MR 手动</text>
+    <line x1="118" y1="0" x2="144" y2="0" stroke="#F79009" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a3amber)"/>
+    <text x="152" y="4" class="legend">系统超时</text>
+    <rect x="236" y="-7" width="20" height="14" rx="3" fill="#FFFFFF" stroke="#98A2B3" stroke-width="2.5"/>
+    <text x="264" y="4" class="legend">终态（不可迁移）</text>
+    <rect x="404" y="-7" width="20" height="14" rx="3" fill="#F6FEF9" stroke="#6CE9A6" stroke-width="2"/>
+    <text x="432" y="4" class="legend">计入"完成"统计</text>
+  </g>
+
+  <!-- 主干 -->
+  <path d="M180 190 V 312" class="edge" marker-end="url(#a3)"/>
+  <text x="194" y="256" class="label">签到 · 坐标必填</text>
+
+  <path d="M180 390 V 492" class="edge" marker-end="url(#a3)"/>
+  <text x="194" y="446" class="label">签退 · 算时长 + R1/R2 判定</text>
+
+  <path d="M180 570 V 652" class="edge" marker-end="url(#a3)"/>
+  <text x="194" y="616" class="label">提交记录 · 谈话要点必填</text>
+
+  <!-- PLANNED 三个出口 -->
+  <path d="M270 130 H 890" class="edge" marker-end="url(#a3)"/>
+  <text x="545" y="118" class="label" text-anchor="middle">删除 · 免原因（仅纠错窗口内）</text>
+
+  <path d="M270 162 H 700" class="edge"/>
+  <text x="500" y="150" class="label" text-anchor="middle">取消 · 需原因</text>
+
+  <path d="M270 184 H 700" class="edgeAmber"/>
+  <text x="520" y="212" class="labelAmber" text-anchor="middle">超时 · 系统代取消（NO_CHECKIN）</text>
+
+  <path d="M700 162 V 265" class="edge"/>
+  <circle cx="700" cy="184" r="3.2" fill="#98A2B3"/>
+  <path d="M700 265 H 890" class="edge" marker-end="url(#a3)"/>
+
+  <!-- CHECKED_IN 两个出口 -->
+  <path d="M270 345 H 890" class="edge" marker-end="url(#a3)"/>
+  <text x="540" y="333" class="label" text-anchor="middle">手动作废 · 需原因</text>
+
+  <path d="M270 375 H 890" class="edgeAmber" marker-end="url(#a3amber)"/>
+  <text x="540" y="393" class="labelAmber" text-anchor="middle">超时 · 系统 · 24h 未签退</text>
+
+  <!-- 状态 -->
+  <g>
+    <rect x="90" y="120" width="180" height="70" rx="12" class="box"/>
+    <text x="180" y="147" class="name" text-anchor="middle">PLANNED</text>
+    <text x="180" y="168" class="meta" text-anchor="middle">已计划 · 未签到</text>
+  </g>
+  <g>
+    <rect x="90" y="320" width="180" height="70" rx="12" class="box"/>
+    <text x="180" y="347" class="name" text-anchor="middle">CHECKED_IN</text>
+    <text x="180" y="368" class="meta" text-anchor="middle">已签到 · 未签退</text>
+  </g>
+  <g>
+    <rect x="90" y="500" width="180" height="70" rx="12" class="boxCount"/>
+    <text x="180" y="527" class="name" text-anchor="middle">CHECKED_OUT</text>
+    <text x="180" y="548" class="meta" text-anchor="middle">已签退 · 计入完成</text>
+  </g>
+  <g>
+    <rect x="90" y="660" width="180" height="70" rx="12" class="boxCount"/>
+    <text x="180" y="687" class="name" text-anchor="middle">REPORTED</text>
+    <text x="180" y="708" class="meta" text-anchor="middle">记录已补全 · 计入完成</text>
+  </g>
+
+  <g>
+    <rect x="900" y="95" width="180" height="90" rx="12" class="boxTerm"/>
+    <text x="990" y="127" class="name" text-anchor="middle">DELETED</text>
+    <text x="990" y="148" class="meta" text-anchor="middle">已删除 · 不计任何统计</text>
+    <text x="990" y="164" class="meta" text-anchor="middle">（纠错，非业务事件）</text>
+  </g>
+  <g>
+    <rect x="900" y="225" width="180" height="80" rx="12" class="boxTerm"/>
+    <text x="990" y="255" class="name" text-anchor="middle">CANCELLED</text>
+    <text x="990" y="276" class="meta" text-anchor="middle">已取消 · 计取消统计</text>
+    <text x="990" y="292" class="meta" text-anchor="middle">（未去成）</text>
+  </g>
+  <g>
+    <rect x="900" y="340" width="180" height="80" rx="12" class="boxTerm"/>
+    <text x="990" y="370" class="name" text-anchor="middle">VOIDED</text>
+    <text x="990" y="391" class="meta" text-anchor="middle">已作废 · 计作废统计</text>
+    <text x="990" y="407" class="meta" text-anchor="middle">（到了但不算）</text>
+  </g>
+
+  <!-- 脚注 -->
+  <text x="50" y="762" class="footnote"><tspan class="strong">统计口径：</tspan>完成 = CHECKED_OUT + REPORTED；取消 = CANCELLED；作废 = VOIDED；删除 = DELETED（不入账）。三个计数器互不重叠。</text>
+  <text x="50" y="780" class="footnote"><tspan class="strong">作废的前提是"人到了"</tspan>（有签到证据），所以"计划过期没去"属于取消而不是作废——否则作废率会混进根本没到过医院的人。</text>
+  <text x="50" y="798" class="footnote"><tspan class="strong">仍然要补：</tspan>手动作废发生在判定之前，必须在作废时补跑 R1/R2 并留下 flags，否则签到证据会随作废一起消失。</text>
+</svg>

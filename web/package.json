@@ -1,0 +1,16 @@
+{
+  "name": "field-visit-compliance-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Vanilla TypeScript frontend for the Field Visit Compliance app",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "node scripts/build.mjs",
+    "check": "node --experimental-strip-types src/selfcheck.ts"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,12 @@
+# 本机工具链（Go/Node/Postgres 的本地副本）
+.tools/
+
+# 依赖与构建中间产物
+node_modules/
+bin/
+*.log
+
+# 题目原件不随仓库分发
+veeva-exercise.pdf
+
+.DS_Store
