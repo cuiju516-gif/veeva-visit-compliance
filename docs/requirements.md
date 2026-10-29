@@ -1,5 +1,9 @@
 # Requirements and acceptance criteria
 
+> **范围以 [`需求说明.md`](./需求说明.md) 为准。** 本文只覆盖题面字面要求与 v1 验收口径；
+> 冻结基线里更严的部分（7 状态机、规则版本化、主数据快照与逻辑删除）以那份文档为准。
+> *Scope follows `需求说明.md`; this file is limited to the brief as written and the v1 acceptance set.*
+
 Derived from the exercise brief. Every requirement below has an ID, and the *Evidence* column
 names the test or artefact that proves it — this file is the contract the rest of the repository
 is checked against. Requirements the brief does not state are marked **[derived]** and justified
