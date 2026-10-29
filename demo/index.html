@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>医药代表学术拜访 · 交互 Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<aside class="role-rail">
+  <div class="rail-head">演示身份</div>
+  <div class="rail-list" id="rolebar"></div>
+</aside>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">MR</span>
+    <div class="brand-text">
+      <h1>学术拜访合规 · 交互 Demo</h1>
+      <p>Veeva 技术笔试题 · 前端原型（纯静态，校验逻辑与后端实现一致）</p>
+    </div>
+  </div>
+  <div class="clockbar">
+    <div class="clock">
+      <span class="clock-label">虚拟时钟</span>
+      <strong id="clock">--:--:--</strong>
+    </div>
+    <div class="clock-actions">
+      <button class="btn tiny" data-action="advance" data-min="1">+1 分</button>
+      <button class="btn tiny" data-action="advance" data-min="5">+5 分</button>
+      <button class="btn tiny" data-action="advance" data-min="10">+10 分</button>
+      <button class="btn tiny ghost" data-action="reset-clock" title="回到真实时间">↺ 复位</button>
+    </div>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-action="tab" data-tab="flow" class="active">流程演示</button>
+  <button data-action="tab" data-tab="board">月度看板</button>
+  <button data-action="tab" data-tab="rules" hidden>规则配置</button>
+</nav>
+
+<main id="app"></main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="logic.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

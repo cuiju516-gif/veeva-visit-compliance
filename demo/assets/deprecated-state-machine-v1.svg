@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="770" viewBox="0 0 1180 770" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#98A2B3"/>
+    </marker>
+    <marker id="arrowAmber" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#F79009"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#F04438"/>
+    </marker>
+  </defs>
+
+  <rect width="1180" height="770" fill="#FFFFFF"/>
+
+  <style>
+    .title { font-size: 17px; font-weight: 650; fill: #101828; }
+    .subtitle { font-size: 12px; fill: #667085; }
+    .box { fill: #FFFFFF; stroke: #D0D5DD; stroke-width: 1.5; }
+    .boxTerminal { fill: #FFFFFF; stroke: #98A2B3; stroke-width: 2.5; }
+    .boxPending { fill: #FFFAEB; stroke: #F79009; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .name { font-size: 14.5px; font-weight: 650; fill: #101828; letter-spacing: .02em; }
+    .namePending { font-size: 13px; font-weight: 650; fill: #B54708; }
+    .meta { font-size: 10.5px; fill: #667085; }
+    .metaPending { font-size: 10px; fill: #B54708; }
+    .edge { stroke: #98A2B3; stroke-width: 1.6; fill: none; }
+    .edgeAmber { stroke: #F79009; stroke-width: 1.6; fill: none; stroke-dasharray: 6 4; }
+    .edgeRed { stroke: #F04438; stroke-width: 1.4; fill: none; stroke-dasharray: 4 4; }
+    .label { font-size: 11.5px; fill: #475467; paint-order: stroke; stroke: #FFFFFF; stroke-width: 4px; stroke-linejoin: round; }
+    .labelAmber { font-size: 11.5px; fill: #B54708; font-weight: 600; paint-order: stroke; stroke: #FFFFFF; stroke-width: 4px; stroke-linejoin: round; }
+    .labelRed { font-size: 11px; fill: #B42318; paint-order: stroke; stroke: #FFFFFF; stroke-width: 4px; stroke-linejoin: round; }
+    .tag { font-size: 9.5px; fill: #667085; }
+    .legend { font-size: 11px; fill: #475467; }
+    .footnote { font-size: 11px; fill: #667085; }
+  </style>
+
+  <!-- header -->
+  <text x="60" y="40" class="title">Plan 状态机</text>
+  <text x="168" y="40" class="subtitle">6 个状态 · 8 条迁移 · 3 个终态（REPORTED / CANCELLED / VOIDED）</text>
+
+  <!-- legend -->
+  <g transform="translate(60,62)">
+    <line x1="0" y1="0" x2="26" y2="0" stroke="#98A2B3" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <text x="34" y="4" class="legend">人工触发</text>
+    <line x1="118" y1="0" x2="144" y2="0" stroke="#F79009" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrowAmber)"/>
+    <text x="152" y="4" class="legend">系统自动</text>
+    <line x1="236" y1="0" x2="262" y2="0" stroke="#F04438" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arrowRed)"/>
+    <text x="270" y="4" class="legend">审批驳回（不迁移）</text>
+    <rect x="408" y="-7" width="20" height="14" rx="3" fill="#FFFAEB" stroke="#F79009" stroke-dasharray="4 3"/>
+    <text x="436" y="4" class="legend">审批态（不改 visit.status）</text>
+    <rect x="640" y="-7" width="20" height="14" rx="3" fill="#FFFFFF" stroke="#98A2B3" stroke-width="2.5"/>
+    <text x="668" y="4" class="legend">终态</text>
+  </g>
+
+  <!-- edges -->
+  <path d="M180 190 V 282" class="edge" marker-end="url(#arrow)"/>
+  <text x="194" y="243" class="label">签到 · 坐标必填</text>
+
+  <path d="M180 360 V 452" class="edge" marker-end="url(#arrow)"/>
+  <text x="194" y="413" class="label">签退 · 服务端算时长 + R1/R2</text>
+
+  <path d="M180 530 V 622" class="edge" marker-end="url(#arrow)"/>
+  <text x="194" y="583" class="label">提交记录 · 谈话要点必填</text>
+
+  <path d="M270 159 H 892" class="edge" marker-end="url(#arrow)"/>
+  <text x="560" y="146" class="label" text-anchor="middle">取消 · 需原因</text>
+
+  <path d="M270 324 C 400 324, 470 405, 552 405" class="edge" marker-end="url(#arrow)"/>
+  <text x="400" y="362" class="label" text-anchor="middle">作废申请 · 需原因</text>
+
+  <path d="M270 497 C 400 497, 470 443, 552 443" class="edge" marker-end="url(#arrow)"/>
+  <text x="405" y="486" class="label" text-anchor="middle">作废申请 · 需原因</text>
+
+  <path d="M730 429 H 820 V 499 H 892" class="edge" marker-end="url(#arrow)"/>
+  <text x="742" y="416" class="label">主管确认</text>
+
+  <path d="M618 460 C 610 508, 682 508, 674 460" class="edgeRed" marker-end="url(#arrowRed)"/>
+  <text x="646" y="530" class="labelRed" text-anchor="middle">主管驳回 → 回到原状态</text>
+
+  <path d="M270 306 H 330 V 250 H 950 V 452" class="edgeAmber" marker-end="url(#arrowAmber)"/>
+  <text x="600" y="236" class="labelAmber" text-anchor="middle">超时 · 系统 · &gt;24h 未签退</text>
+
+  <!-- states -->
+  <g>
+    <rect x="90" y="120" width="180" height="70" rx="12" class="box"/>
+    <text x="180" y="147" class="name" text-anchor="middle">PLANNED</text>
+    <text x="180" y="168" class="meta" text-anchor="middle">已计划 · 未到院 · 不计入</text>
+  </g>
+
+  <g>
+    <rect x="90" y="290" width="180" height="70" rx="12" class="box"/>
+    <text x="180" y="317" class="name" text-anchor="middle">CHECKED_IN</text>
+    <text x="180" y="338" class="meta" text-anchor="middle">已签到 · 进行中 · 计入</text>
+  </g>
+
+  <g>
+    <rect x="90" y="460" width="180" height="70" rx="12" class="box"/>
+    <text x="180" y="487" class="name" text-anchor="middle">CHECKED_OUT</text>
+    <text x="180" y="508" class="meta" text-anchor="middle">已签退 · 待补记录 · 计入</text>
+  </g>
+
+  <g>
+    <rect x="90" y="630" width="180" height="70" rx="12" class="boxTerminal"/>
+    <text x="180" y="657" class="name" text-anchor="middle">REPORTED</text>
+    <text x="180" y="678" class="meta" text-anchor="middle">已完成 · 冻结 · 计入</text>
+  </g>
+
+  <g>
+    <rect x="900" y="120" width="180" height="70" rx="12" class="boxTerminal"/>
+    <text x="990" y="147" class="name" text-anchor="middle">CANCELLED</text>
+    <text x="990" y="168" class="meta" text-anchor="middle">已取消 · 未执行 · 不计入</text>
+  </g>
+
+  <g>
+    <rect x="900" y="460" width="180" height="70" rx="12" class="boxTerminal"/>
+    <text x="990" y="487" class="name" text-anchor="middle">VOIDED</text>
+    <text x="990" y="508" class="meta" text-anchor="middle">已作废 · 证据保留 · 不计入</text>
+  </g>
+
+  <g>
+    <rect x="560" y="390" width="170" height="70" rx="12" class="boxPending"/>
+    <text x="645" y="417" class="namePending" text-anchor="middle">PENDING</text>
+    <text x="645" y="437" class="metaPending" text-anchor="middle">作废申请 · 待主管确认</text>
+  </g>
+
+  <!-- annotations -->
+  <text x="60" y="742" class="footnote">① 删除是软删除标记（deleted），不是状态迁移，未画入图；取消 / 删除 / 作废都不物理删除记录。</text>
+  <text x="60" y="758" class="footnote">② 作废的两种来源：人工（代表申请 + 主管确认，cause=MANUAL）与系统（超时扫描，cause=TIMEOUT），终点同为 VOIDED。</text>
+</svg>
