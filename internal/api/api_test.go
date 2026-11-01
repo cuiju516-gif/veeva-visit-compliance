@@ -248,7 +248,7 @@ func (h *harness) decodeError(raw []byte) apiError {
 // createPlanned posts a valid plan and returns the resulting visit.
 func (h *harness) createPlanned() visitDTO {
 	h.t.Helper()
-	resp, raw := h.do(http.MethodPost, "/api/visits", map[string]any{
+	resp, raw := h.doAs("mr-1", http.MethodPost, "/api/visits", map[string]any{
 		"mrId": "mr-1", "hcpId": "hcp-1", "productId": "prod-1",
 		"plannedAt": time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 	})
@@ -262,7 +262,7 @@ func (h *harness) createPlanned() visitDTO {
 
 func TestCreateVisit(t *testing.T) {
 	h := newHarness(t)
-	resp, raw := h.do(http.MethodPost, "/api/visits", map[string]any{
+	resp, raw := h.doAs("mr-1", http.MethodPost, "/api/visits", map[string]any{
 		"mrId": "mr-1", "hcpId": "hcp-1", "productId": "prod-1",
 		"plannedAt": "2026-11-02T10:00:00+08:00",
 	})
@@ -321,7 +321,7 @@ func TestCreateVisitValidation(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, raw := h.do(http.MethodPost, "/api/visits", tc.body)
+			resp, raw := h.doAs("mr-1", http.MethodPost, "/api/visits", tc.body)
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body %s", resp.StatusCode, raw)
 			}
@@ -1126,4 +1126,41 @@ func (f *fakeRepo) SetRulesWithTimeouts(
 		Note:               note,
 	}
 	return f.rule, nil
+}
+
+func TestRepCannotPlanForAnotherRep(t *testing.T) {
+	h := newHarness(t)
+
+	body := map[string]any{
+		"mrId": "mr-2", "hcpId": "hcp-1", "productId": "prod-1",
+		"plannedAt": time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339),
+	}
+
+	t.Run("rep posting another rep's id is forbidden", func(t *testing.T) {
+		resp, raw := h.doAs("mr-1", http.MethodPost, "/api/visits", body)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body %s", resp.StatusCode, raw)
+		}
+		if e := h.decodeError(raw); e.Code != CodeForbidden {
+			t.Fatalf("code = %q, want forbidden", e.Code)
+		}
+	})
+
+	t.Run("rep posting their own id is accepted", func(t *testing.T) {
+		own := map[string]any{
+			"mrId": "mr-1", "hcpId": "hcp-1", "productId": "prod-1",
+			"plannedAt": time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339),
+		}
+		resp, raw := h.doAs("mr-1", http.MethodPost, "/api/visits", own)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body %s", resp.StatusCode, raw)
+		}
+	})
+
+	t.Run("the admin may plan on a rep's behalf", func(t *testing.T) {
+		resp, raw := h.doAs("admin", http.MethodPost, "/api/visits", body)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("status = %d, want 201; body %s", resp.StatusCode, raw)
+		}
+	})
 }

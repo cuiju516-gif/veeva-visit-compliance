@@ -120,16 +120,29 @@ export function mountPlanView(host: HTMLElement, handlers: PlanHandlers): PlanVi
         label: `${product.name} (${product.code})`,
       })),
     );
-    // A rep can only plan their own visits, so the selector is locked to them.
-    // The server would refuse anything else anyway (X-Actor), and showing an
-    // editable list of other reps here would be an invitation to a 403.
-    const actor = current === null ? '' : current.actor;
-    mrSelect.disabled = catalog === null || actor !== '';
-    if (actor !== '' && mrSelect.value !== actor) {
-      mrSelect.value = actor;
-    }
     hcpSelect.disabled = catalog === null;
     productSelect.disabled = catalog === null;
+    syncSubmit();
+  }
+
+  /**
+   * A rep can only plan their own visits, so the selector is locked to them.
+   *
+   * This runs on every update, not just when the catalog loads: switching actor
+   * does not change the catalog, so hanging the lock off the catalog diff meant
+   * it was applied once at boot and never again — the dropdown stayed unlocked
+   * for whoever was selected. The server refuses the request anyway, but the UI
+   * should not offer it in the first place.
+   */
+  function applyActorLock(): void {
+    const actor = current === null ? '' : current.actor;
+    const locked = current !== null && current.catalog !== null && actor !== '';
+    mrSelect.disabled = current === null || current.catalog === null || actor !== '';
+    if (locked) {
+      if (mrSelect.value !== actor) mrSelect.value = actor;
+      const option = Array.from(mrSelect.options).find((o) => o.value === actor);
+      if (option !== undefined) option.textContent = `${option.textContent?.replace('（我）', '') ?? ''}（我）`;
+    }
     syncSubmit();
   }
 
@@ -186,7 +199,7 @@ export function mountPlanView(host: HTMLElement, handlers: PlanHandlers): PlanVi
       }
       form.setAttribute('aria-busy', String(state.loading.catalog));
       banner.show(state.errors.plan ?? state.errors.catalog);
-      syncSubmit();
+      applyActorLock();
     },
     reset,
   };

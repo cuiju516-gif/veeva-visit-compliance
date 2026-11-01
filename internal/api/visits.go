@@ -62,6 +62,15 @@ func (s *Server) handleCreateVisit(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, invalidField("mrId", "mrId is required"))
 		return
 	}
+	// A rep may only plan their own visits. Without this check the actor header
+	// would be advisory on the one endpoint that creates data: any client could
+	// post someone else's mrId and the row would belong to them. The admin keeps
+	// the ability to plan on behalf of a rep, which is what the role is for.
+	if actor := actorFrom(r.Context()); !actor.IsAdmin() && req.MRID != actor.MRID {
+		s.fail(w, http.StatusForbidden, CodeForbidden,
+			"a rep may only create visits for themselves", map[string]string{"field": "mrId"})
+		return
+	}
 	if strings.TrimSpace(req.HCPID) == "" {
 		s.handleError(w, r, invalidField("hcpId", "hcpId is required"))
 		return
