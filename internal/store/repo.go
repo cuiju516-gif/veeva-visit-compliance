@@ -106,22 +106,54 @@ type ListParams struct {
 	Limit int
 }
 
+// RuleVersion is one row of the threshold history. The latest row is the one in
+// force; older rows exist so a past evaluation can still be explained.
+type RuleVersion struct {
+	Version            string    `json:"version"`
+	MinDurationSeconds int       `json:"minDurationSeconds"`
+	MaxDistanceMeters  float64   `json:"maxDistanceMeters"`
+	CreatedAt          time.Time `json:"createdAt"`
+	CreatedBy          string    `json:"createdBy"`
+	Note               string    `json:"note"`
+}
+
+// Thresholds converts a version into the domain type the rule engine takes.
+func (r RuleVersion) Thresholds() domain.Thresholds {
+	return domain.Thresholds{
+		MinDurationSeconds: r.MinDurationSeconds,
+		MaxDistanceMeters:  r.MaxDistanceMeters,
+	}
+}
+
 // MonthlyRow is one product in one month on the dashboard.
+//
+// The five counters are the ones the frozen baseline defines. They are mutually
+// exclusive by construction: a visit lands in exactly one of Done / Cancelled /
+// Voided, and Deleted lands in none. Effective = Done - Abnormal.
 type MonthlyRow struct {
 	Month         string  `json:"month"`
 	ProductID     string  `json:"productId"`
 	ProductName   string  `json:"productName"`
-	Visits        int     `json:"visits"`
+	Visits        int     `json:"visits"` // Done + Cancelled + Voided
+	Done          int     `json:"done"`
+	Effective     int     `json:"effective"`
 	Abnormal      int     `json:"abnormal"`
+	Cancelled     int     `json:"cancelled"`
+	Voided        int     `json:"voided"`
 	AbnormalShare float64 `json:"abnormalShare"`
 }
 
-// Dashboard is the monthly per-product aggregation.
+// Dashboard is the monthly per-product aggregation plus the same five numbers
+// across all products.
 type Dashboard struct {
-	Months        []string     `json:"months"`
-	Rows          []MonthlyRow `json:"rows"`
-	TotalVisits   int          `json:"totalVisits"`
-	TotalAbnormal int          `json:"totalAbnormal"`
+	Months         []string     `json:"months"`
+	Rows           []MonthlyRow `json:"rows"`
+	TotalVisits    int          `json:"totalVisits"`
+	TotalDone      int          `json:"totalDone"`
+	TotalEffective int          `json:"totalEffective"`
+	TotalAbnormal  int          `json:"totalAbnormal"`
+	TotalCancelled int          `json:"totalCancelled"`
+	TotalVoided    int          `json:"totalVoided"`
 }
 
 // Repo is the persistence contract. Two implementations exist on purpose: the
@@ -133,12 +165,16 @@ type Repo interface {
 	Get(ctx context.Context, id string) (Record, error)
 	List(ctx context.Context, p ListParams) ([]Record, error)
 	CheckIn(ctx context.Context, id string, at time.Time, pos domain.Coordinates) (Record, error)
-	CheckOut(ctx context.Context, id string, at time.Time, pos domain.Coordinates, th domain.Thresholds) (Record, error)
+	CheckOut(ctx context.Context, id string, at time.Time, pos domain.Coordinates) (Record, error)
 	SubmitReport(ctx context.Context, id string, p ReportParams) (Record, error)
 	Cancel(ctx context.Context, id, reason string, at time.Time) (Record, error)
-	Void(ctx context.Context, id, reason string, at time.Time, th domain.Thresholds) (Record, error)
+	Void(ctx context.Context, id, reason string, at time.Time) (Record, error)
 	Delete(ctx context.Context, id string, now time.Time) (Record, error)
 	Dashboard(ctx context.Context, months int, mrid string) (Dashboard, error)
+	CurrentRules(ctx context.Context) (RuleVersion, error)
+	// SetRules creates a new version when the thresholds actually change, and
+	// returns the resulting version either way.
+	SetRules(ctx context.Context, th domain.Thresholds, by, note string) (RuleVersion, error)
 }
 
 // StateError means the visit exists but is not in a state that allows the

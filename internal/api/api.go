@@ -107,6 +107,9 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/dashboard/monthly", s.handleDashboard)
 
+	s.mux.HandleFunc("GET /api/admin/rules", s.handleGetRules)
+	s.mux.HandleFunc("PUT /api/admin/rules", s.handlePutRules)
+
 	if s.assets != nil {
 		// Everything that is not /api or /healthz falls through to the
 		// embedded single-page frontend.

@@ -188,7 +188,7 @@ func (s *Server) handleCheckOut(w http.ResponseWriter, r *http.Request) {
 
 	// Duration and flags are derived inside the repository from stored
 	// timestamps. Nothing about them comes off the wire.
-	rec, err := s.repo.CheckOut(ctx, r.PathValue("id"), s.now(), pos, s.thresholds)
+	rec, err := s.repo.CheckOut(ctx, r.PathValue("id"), s.now(), pos)
 	if err != nil {
 		s.handleError(w, r, err)
 		return
@@ -352,7 +352,7 @@ func (s *Server) handleVoid(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
-	rec, err := s.repo.Void(ctx, r.PathValue("id"), reason, s.now(), s.thresholds)
+	rec, err := s.repo.Void(ctx, r.PathValue("id"), reason, s.now())
 	if err != nil {
 		s.handleError(w, r, err)
 		return
@@ -370,4 +370,75 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- rules administration -------------------------------------------------
+
+type rulesRequest struct {
+	MinDurationSeconds int     `json:"minDurationSeconds"`
+	MaxDistanceMeters  float64 `json:"maxDistanceMeters"`
+	Note               string  `json:"note"`
+}
+
+type rulesResponse struct {
+	store.RuleVersion
+	History []store.RuleVersion `json:"history,omitempty"`
+}
+
+// requireAdmin is the one place that decides who may change thresholds. The
+// check is here rather than in the UI: the UI only hides the entry point.
+func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if actorFrom(r.Context()).IsAdmin() {
+		return true
+	}
+	s.fail(w, http.StatusForbidden, CodeForbidden, "only the administrator may change compliance rules", nil)
+	return false
+}
+
+func (s *Server) handleGetRules(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	ctx, cancel := s.contextWithTimeout(r)
+	defer cancel()
+
+	current, err := s.repo.CurrentRules(ctx)
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rulesResponse{
+		RuleVersion: current,
+		History:     []store.RuleVersion{current},
+	})
+}
+
+func (s *Server) handlePutRules(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	var req rulesRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+
+	th := domain.Thresholds{
+		MinDurationSeconds: req.MinDurationSeconds,
+		MaxDistanceMeters:  req.MaxDistanceMeters,
+	}
+	if err := th.Validate(); err != nil {
+		s.handleError(w, r, invalidField("minDurationSeconds", "%v", err))
+		return
+	}
+
+	ctx, cancel := s.contextWithTimeout(r)
+	defer cancel()
+
+	version, err := s.repo.SetRules(ctx, th, actorFrom(r.Context()).MRID, req.Note)
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rulesResponse{RuleVersion: version, History: []store.RuleVersion{version}})
 }

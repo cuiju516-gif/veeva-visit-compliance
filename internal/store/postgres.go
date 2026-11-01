@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -171,6 +172,7 @@ const visitSelect = `
 	       COALESCE(v.talking_points, ''), COALESCE(v.hcp_feedback, ''), v.materials_distributed,
 	       COALESCE(v.cancel_reason, ''), v.cancelled_at, COALESCE(v.void_reason, ''),
 	       COALESCE(v.void_cause, ''), v.voided_at, v.deleted_at, v.reported_at,
+	       v.evaluation, COALESCE(v.rule_version, ''),
 	       v.created_at, v.updated_at, v.version
 	FROM visit v
 	JOIN mr m ON m.id = v.mr_id
@@ -190,8 +192,9 @@ func scanVisit(row pgx.Row) (Record, error) {
 			lat *float64
 			lng *float64
 		}
-		version int
-		dur     *int
+		version    int
+		dur        *int
+		evaluation []byte
 	)
 	err := row.Scan(
 		&v.ID, &v.MRID, &rec.MRName,
@@ -204,6 +207,7 @@ func scanVisit(row pgx.Row) (Record, error) {
 		&v.TalkingPoints, &v.HCPFeedback, &v.MaterialsDistributed,
 		&v.CancelReason, &v.CancelledAt, &v.VoidReason,
 		&v.VoidCause, &v.VoidedAt, &v.DeletedAt, &v.ReportedAt,
+		&evaluation, &v.RuleVersion,
 		&v.CreatedAt, &v.UpdatedAt, &version,
 	)
 	if err != nil {
@@ -221,6 +225,13 @@ func scanVisit(row pgx.Row) (Record, error) {
 	}
 	if dur != nil {
 		v.Duration = time.Duration(*dur) * time.Second
+	}
+	if len(evaluation) > 0 {
+		var snap domain.Evaluation
+		if err := json.Unmarshal(evaluation, &snap); err != nil {
+			return Record{}, fmt.Errorf("decode evaluation: %w", err)
+		}
+		v.Evaluation = &snap
 	}
 	return rec, nil
 }
@@ -479,7 +490,7 @@ func (p *Postgres) CheckIn(ctx context.Context, id string, at time.Time, pos dom
 // CheckOut records the departure and derives the duration and compliance flags
 // (step 4). Duration and flags are computed here, on the server, from the
 // stored check-in: a client cannot submit either of them.
-func (p *Postgres) CheckOut(ctx context.Context, id string, at time.Time, pos domain.Coordinates, th domain.Thresholds) (Record, error) {
+func (p *Postgres) CheckOut(ctx context.Context, id string, at time.Time, pos domain.Coordinates) (Record, error) {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return Record{}, err
@@ -502,14 +513,30 @@ func (p *Postgres) CheckOut(ctx context.Context, id string, at time.Time, pos do
 	if err != nil {
 		return Record{}, err
 	}
-	flags, err := domain.Evaluate(domain.EvaluationInput{
+
+	// The thresholds come from the rules table, not from the process config: the
+	// point of versioning them is that the row decides, and the snapshot records
+	// which row was in force.
+	rules, err := p.CurrentRules(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	evaluation, err := domain.Snapshot(domain.EvaluationInput{
 		CheckinAt:    *rec.Visit.CheckinAt,
 		CheckoutAt:   at,
 		Checkin:      *rec.Visit.CheckinPos,
 		Checkout:     pos,
 		HospitalBase: rec.HospitalBase,
-		Thresholds:   th,
+		Thresholds:   rules.Thresholds(),
+		RuleVersion:  rules.Version,
+		EvaluatedAt:  at,
+		Source:       "checkout",
 	})
+	if err != nil {
+		return Record{}, err
+	}
+	flags := evaluation.Flags
+	payload, err := json.Marshal(evaluation)
 	if err != nil {
 		return Record{}, err
 	}
@@ -519,9 +546,10 @@ func (p *Postgres) CheckOut(ctx context.Context, id string, at time.Time, pos do
 		   SET status = 'CHECKED_OUT',
 		       checkout_at = $2, checkout_lat = $3, checkout_lng = $4,
 		       duration_seconds = floor(extract(epoch FROM ($2 - checkin_at)))::int,
+		       evaluation = $5, rule_version = $6,
 		       version = version + 1, updated_at = now()
 		 WHERE id = $1`,
-		id, at, pos.Lat, pos.Lng); err != nil {
+		id, at, pos.Lat, pos.Lng, payload, rules.Version); err != nil {
 		return Record{}, err
 	}
 
@@ -531,8 +559,8 @@ func (p *Postgres) CheckOut(ctx context.Context, id string, at time.Time, pos do
 	}
 	for _, f := range flags {
 		if _, err := tx.Exec(ctx,
-			"INSERT INTO visit_flag (visit_id, code, detail) VALUES ($1, $2, $3)",
-			id, string(f.Code), f.Detail); err != nil {
+			"INSERT INTO visit_flag (visit_id, code, detail, rule_version) VALUES ($1, $2, $3, $4)",
+			id, string(f.Code), f.Detail, rules.Version); err != nil {
 			return Record{}, err
 		}
 	}
@@ -626,18 +654,27 @@ func (p *Postgres) Dashboard(ctx context.Context, months int, mrid string) (Dash
 	now := time.Now().In(loc)
 	firstMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc).AddDate(0, -(months - 1), 0)
 
+	// One row per (month, product). The five counters are computed from the
+	// state, never from the flag join: joining flags would multiply a visit by
+	// its number of findings and inflate "visits" — the bug this query exists to
+	// avoid. "Abnormal" is read from the evaluation snapshot instead.
 	rows, err := p.pool.Query(ctx, `
-		SELECT to_char(date_trunc('month', v.checkin_at AT TIME ZONE 'Asia/Shanghai'), 'YYYY-MM') AS month,
+		SELECT to_char(date_trunc('month', COALESCE(v.checkin_at, v.planned_at) AT TIME ZONE 'Asia/Shanghai'), 'YYYY-MM') AS month,
 		       v.product_id, v.product_name,
-		       -- DISTINCT is load-bearing: the flag join multiplies a visit by
-		       -- its number of flags, so a visit flagged for both a short stay
-		       -- and a location deviation would otherwise be counted twice.
-		       count(DISTINCT v.id) AS visits,
-		       count(DISTINCT v.id) FILTER (WHERE f.visit_id IS NOT NULL) AS abnormal
+		       -- visits = the three terminals only: a plan that has not happened
+		       -- is not a visit, which keeps visits = done + cancelled + voided
+		       -- exact (deleted is excluded by the WHERE, open states here).
+		       count(*) FILTER (WHERE v.status NOT IN ('PLANNED', 'CHECKED_IN')) AS visits,
+		       count(*) FILTER (WHERE v.status IN ('CHECKED_OUT', 'REPORTED')) AS done,
+		       count(*) FILTER (WHERE v.status IN ('CHECKED_OUT', 'REPORTED')
+		                          AND COALESCE((v.evaluation->>'abnormal')::boolean, false) = false) AS effective,
+		       count(*) FILTER (WHERE v.status IN ('CHECKED_OUT', 'REPORTED')
+		                          AND COALESCE((v.evaluation->>'abnormal')::boolean, false)) AS abnormal,
+		       count(*) FILTER (WHERE v.status = 'CANCELLED') AS cancelled,
+		       count(*) FILTER (WHERE v.status = 'VOIDED') AS voided
 		  FROM visit v
-		  LEFT JOIN visit_flag f ON f.visit_id = v.id
-		 WHERE v.checkin_at IS NOT NULL
-		   AND v.checkin_at >= $1
+		 WHERE v.status <> 'DELETED'
+		   AND COALESCE(v.checkin_at, v.planned_at) >= $1
 		   AND ($2 = '' OR v.mr_id = $2::uuid)
 		 GROUP BY 1, 2, 3
 		 ORDER BY 1, 3`, firstMonth, mrid)
@@ -649,14 +686,22 @@ func (p *Postgres) Dashboard(ctx context.Context, months int, mrid string) (Dash
 	out := Dashboard{Months: monthRange(firstMonth, months), Rows: []MonthlyRow{}}
 	for rows.Next() {
 		var r MonthlyRow
-		if err := rows.Scan(&r.Month, &r.ProductID, &r.ProductName, &r.Visits, &r.Abnormal); err != nil {
+		if err := rows.Scan(&r.Month, &r.ProductID, &r.ProductName,
+			&r.Visits, &r.Done, &r.Effective, &r.Abnormal, &r.Cancelled, &r.Voided); err != nil {
 			return Dashboard{}, err
 		}
-		if r.Visits > 0 {
-			r.AbnormalShare = float64(r.Abnormal) / float64(r.Visits)
+		// The share's denominator is "done", not "visits": a cancelled plan is
+		// not a visit that went wrong, and mixing them would let a rep improve
+		// the abnormality rate by cancelling more.
+		if r.Done > 0 {
+			r.AbnormalShare = float64(r.Abnormal) / float64(r.Done)
 		}
 		out.TotalVisits += r.Visits
+		out.TotalDone += r.Done
+		out.TotalEffective += r.Effective
 		out.TotalAbnormal += r.Abnormal
+		out.TotalCancelled += r.Cancelled
+		out.TotalVoided += r.Voided
 		out.Rows = append(out.Rows, r)
 	}
 	return out, rows.Err()
@@ -704,7 +749,7 @@ func (p *Postgres) Cancel(ctx context.Context, id, reason string, at time.Time) 
 // The location rule is re-run against the check-in point inside the same
 // transaction. A voided visit can leave the "completed" count, but it must not
 // take its abnormality with it — that is the whole anti-cheat design.
-func (p *Postgres) Void(ctx context.Context, id, reason string, at time.Time, th domain.Thresholds) (Record, error) {
+func (p *Postgres) Void(ctx context.Context, id, reason string, at time.Time) (Record, error) {
 	if strings.TrimSpace(reason) == "" {
 		return Record{}, ErrReasonRequired
 	}
@@ -725,7 +770,23 @@ func (p *Postgres) Void(ctx context.Context, id, reason string, at time.Time, th
 		return Record{}, &StateError{Status: rec.Visit.Status, Action: "void"}
 	}
 
-	flags, err := domain.EvaluateCheckinPoint(*rec.Visit.CheckinPos, rec.HospitalBase, th)
+	rules, err := p.CurrentRules(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	evaluation, err := domain.SnapshotCheckinPoint(domain.EvaluationInput{
+		Checkin:      *rec.Visit.CheckinPos,
+		HospitalBase: rec.HospitalBase,
+		Thresholds:   rules.Thresholds(),
+		RuleVersion:  rules.Version,
+		EvaluatedAt:  at,
+		Source:       "void_backfill",
+	})
+	if err != nil {
+		return Record{}, err
+	}
+	flags := evaluation.Flags
+	payload, err := json.Marshal(evaluation)
 	if err != nil {
 		return Record{}, err
 	}
@@ -733,9 +794,10 @@ func (p *Postgres) Void(ctx context.Context, id, reason string, at time.Time, th
 	if _, err := tx.Exec(ctx, `
 		UPDATE visit
 		   SET status = 'VOIDED', void_reason = $2, void_cause = $3, voided_at = $4,
+		       evaluation = $5, rule_version = $6,
 		       version = version + 1, updated_at = now()
 		 WHERE id = $1`,
-		id, reason, domain.VoidCauseManual, at); err != nil {
+		id, reason, domain.VoidCauseManual, at, payload, rules.Version); err != nil {
 		return Record{}, err
 	}
 
@@ -745,8 +807,8 @@ func (p *Postgres) Void(ctx context.Context, id, reason string, at time.Time, th
 	}
 	for _, f := range flags {
 		if _, err := tx.Exec(ctx,
-			"INSERT INTO visit_flag (visit_id, code, detail) VALUES ($1, $2, $3)",
-			id, string(f.Code), f.Detail); err != nil {
+			"INSERT INTO visit_flag (visit_id, code, detail, rule_version) VALUES ($1, $2, $3, $4)",
+			id, string(f.Code), f.Detail, rules.Version); err != nil {
 			return Record{}, err
 		}
 	}
@@ -788,4 +850,97 @@ func (p *Postgres) Delete(ctx context.Context, id string, now time.Time) (Record
 		return Record{}, p.classifyMiss(ctx, id, "delete")
 	}
 	return p.Get(ctx, id)
+}
+
+// CurrentRules returns the threshold version in force.
+//
+// "Latest" is by created_at, not by version string: v10 sorts before v9 as text,
+// and an ordering bug here would silently evaluate new visits against old
+// thresholds — the exact failure this table exists to prevent.
+func (p *Postgres) CurrentRules(ctx context.Context) (RuleVersion, error) {
+	var r RuleVersion
+	err := p.pool.QueryRow(ctx, `
+		SELECT version, min_duration_sec, max_distance_m, created_at, created_by, note
+		  FROM rule_version
+		 ORDER BY created_at DESC, version DESC
+		 LIMIT 1`).
+		Scan(&r.Version, &r.MinDurationSeconds, &r.MaxDistanceMeters, &r.CreatedAt, &r.CreatedBy, &r.Note)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RuleVersion{}, ErrNotFound
+	}
+	if err != nil {
+		return RuleVersion{}, err
+	}
+	return r, nil
+}
+
+// SetRules creates a new threshold version when the numbers actually change.
+//
+// Returning the existing version on a no-op keeps the history honest: a client
+// that saves twice does not manufacture a version that never differed. The
+// insert is serialised behind an advisory lock so two administrators saving at
+// once cannot both claim v3.
+func (p *Postgres) SetRules(ctx context.Context, th domain.Thresholds, by, note string) (RuleVersion, error) {
+	if err := th.Validate(); err != nil {
+		return RuleVersion{}, err
+	}
+
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return RuleVersion{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x72756c65)); err != nil { // "rule"
+		return RuleVersion{}, err
+	}
+
+	current, err := p.currentRulesTx(ctx, tx)
+	if err != nil {
+		return RuleVersion{}, err
+	}
+	if current.MinDurationSeconds == th.MinDurationSeconds &&
+		current.MaxDistanceMeters == th.MaxDistanceMeters {
+		if err := tx.Commit(ctx); err != nil {
+			return RuleVersion{}, err
+		}
+		return current, nil
+	}
+
+	var next string
+	if err := tx.QueryRow(ctx, `
+		SELECT 'v' || (COALESCE(MAX(NULLIF(regexp_replace(version, '\D', '', 'g'), '')::int), 0) + 1)
+		  FROM rule_version`).Scan(&next); err != nil {
+		return RuleVersion{}, err
+	}
+
+	var out RuleVersion
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO rule_version (version, min_duration_sec, max_distance_m, created_by, note)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING version, min_duration_sec, max_distance_m, created_at, created_by, note`,
+		next, th.MinDurationSeconds, th.MaxDistanceMeters, by, note).
+		Scan(&out.Version, &out.MinDurationSeconds, &out.MaxDistanceMeters,
+			&out.CreatedAt, &out.CreatedBy, &out.Note); err != nil {
+		return RuleVersion{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return RuleVersion{}, err
+	}
+	return out, nil
+}
+
+func (p *Postgres) currentRulesTx(ctx context.Context, tx pgx.Tx) (RuleVersion, error) {
+	var r RuleVersion
+	err := tx.QueryRow(ctx, `
+		SELECT version, min_duration_sec, max_distance_m, created_at, created_by, note
+		  FROM rule_version
+		 ORDER BY created_at DESC, version DESC
+		 LIMIT 1`).
+		Scan(&r.Version, &r.MinDurationSeconds, &r.MaxDistanceMeters, &r.CreatedAt, &r.CreatedBy, &r.Note)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RuleVersion{}, ErrNotFound
+	}
+	return r, err
 }

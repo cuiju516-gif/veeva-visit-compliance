@@ -221,8 +221,7 @@ func TestRepositoryLifecycle(t *testing.T) {
 	}
 
 	out, err := repo.CheckOut(ctx, created.Visit.ID,
-		time.Now().UTC().Add(90*time.Second), domain.Coordinates{Lat: hcp.BaseLat + 0.008, Lng: hcp.BaseLng},
-		domain.DefaultThresholds())
+		time.Now().UTC().Add(90*time.Second), domain.Coordinates{Lat: hcp.BaseLat + 0.008, Lng: hcp.BaseLng})
 	if err != nil {
 		t.Fatalf("check-out: %v", err)
 	}
@@ -327,7 +326,7 @@ func TestBothPointsDeviatingProducesThreeFlags(t *testing.T) {
 	if _, err := repo.CheckIn(ctx, created.Visit.ID, at, far); err != nil {
 		t.Fatalf("check-in: %v", err)
 	}
-	out, err := repo.CheckOut(ctx, created.Visit.ID, at.Add(40*time.Second), far, domain.DefaultThresholds())
+	out, err := repo.CheckOut(ctx, created.Visit.ID, at.Add(40*time.Second), far)
 	if err != nil {
 		t.Fatalf("check-out must not fail when both points deviate: %v", err)
 	}
@@ -402,7 +401,7 @@ func TestTerminalLifecycle(t *testing.T) {
 		if _, err := repo.CheckIn(ctx, rec.Visit.ID, time.Now().UTC(), pos); err != nil {
 			t.Fatalf("check-in: %v", err)
 		}
-		got, err := repo.Void(ctx, rec.Visit.ID, "wrong building", time.Now(), domain.DefaultThresholds())
+		got, err := repo.Void(ctx, rec.Visit.ID, "wrong building", time.Now())
 		if err != nil {
 			t.Fatalf("void: %v", err)
 		}
@@ -529,5 +528,183 @@ func TestSnapshotSurvivesMasterDataChanges(t *testing.T) {
 		if p.ID == product.ID {
 			t.Fatalf("deleted product is still offered in the catalog")
 		}
+	}
+}
+
+// TestRuleVersionSnapshotSurvivesThresholdChange is acceptance point 8: changing
+// the thresholds must not rewrite what was already decided. The only way to see
+// that is to check a visit out, change the rules, and read the visit again.
+func TestRuleVersionSnapshotSurvivesThresholdChange(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	cat, err := repo.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	hcp := cat.HCPs[0]
+	mr := pickMR(t, repo, cat)
+
+	before, err := repo.CurrentRules(ctx)
+	if err != nil {
+		t.Fatalf("current rules: %v", err)
+	}
+
+	rec, err := repo.Create(ctx, CreateParams{
+		MRID: mr.ID, HCPID: hcp.ID, ProductID: cat.Products[0].ID,
+		PlannedAt: time.Now().Add(48 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = repo.pool.Exec(context.Background(), "DELETE FROM visit WHERE id = $1", rec.Visit.ID)
+		// Put the original thresholds back so other tests are not affected.
+		_, _ = repo.SetRules(context.Background(), before.Thresholds(), "test", "restore")
+	})
+
+	at := time.Now().UTC()
+	pos := domain.Coordinates{Lat: hcp.BaseLat, Lng: hcp.BaseLng}
+	if _, err := repo.CheckIn(ctx, rec.Visit.ID, at, pos); err != nil {
+		t.Fatalf("check-in: %v", err)
+	}
+	// A 4-minute stay: abnormal under 300 s, compliant under 60 s.
+	checkedOut, err := repo.CheckOut(ctx, rec.Visit.ID, at.Add(4*time.Minute), pos)
+	if err != nil {
+		t.Fatalf("check-out: %v", err)
+	}
+	if checkedOut.Visit.Evaluation == nil {
+		t.Fatalf("check-out did not write an evaluation snapshot")
+	}
+	if !checkedOut.Visit.Evaluation.Abnormal {
+		t.Fatalf("4-minute stay should be abnormal under the default 300 s rule")
+	}
+	decidedVersion := checkedOut.Visit.RuleVersion
+	if decidedVersion != before.Version {
+		t.Fatalf("snapshot version = %q, want the version in force %q", decidedVersion, before.Version)
+	}
+
+	// Loosen the rule to 60 s, which would make the same visit compliant.
+	loosened, err := repo.SetRules(ctx, domain.Thresholds{MinDurationSeconds: 60, MaxDistanceMeters: 500}, "admin", "test")
+	if err != nil {
+		t.Fatalf("set rules: %v", err)
+	}
+	if loosened.Version == before.Version {
+		t.Fatalf("changing thresholds must create a new version, still on %q", loosened.Version)
+	}
+
+	after, err := repo.Get(ctx, rec.Visit.ID)
+	if err != nil {
+		t.Fatalf("get after rule change: %v", err)
+	}
+	if after.Visit.Evaluation == nil || !after.Visit.Evaluation.Abnormal {
+		t.Fatalf("historical verdict changed when the thresholds changed: %+v", after.Visit.Evaluation)
+	}
+	if after.Visit.RuleVersion != decidedVersion {
+		t.Fatalf("historical rule versions moved: %q -> %q", decidedVersion, after.Visit.RuleVersion)
+	}
+	if after.Visit.Evaluation.Thresholds.MinDurationSeconds != before.MinDurationSeconds {
+		t.Fatalf("snapshot thresholds were rewritten: %+v", after.Visit.Evaluation.Thresholds)
+	}
+}
+
+// TestSetRulesIsIdempotent pins the other half: saving the same numbers twice
+// must not manufacture a version that never differed.
+func TestSetRulesIsIdempotent(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+
+	start, err := repo.CurrentRules(ctx)
+	if err != nil {
+		t.Fatalf("current rules: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = repo.SetRules(context.Background(), start.Thresholds(), "test", "restore")
+	})
+
+	first, err := repo.SetRules(ctx, domain.Thresholds{MinDurationSeconds: 420, MaxDistanceMeters: 800}, "admin", "first")
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	second, err := repo.SetRules(ctx, domain.Thresholds{MinDurationSeconds: 420, MaxDistanceMeters: 800}, "admin", "again")
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	if first.Version != second.Version {
+		t.Fatalf("saving identical thresholds created a new version: %q -> %q", first.Version, second.Version)
+	}
+}
+
+// TestDashboardBucketsPartition is acceptance point 10: the five counters must
+// account for every visit exactly once, and deleted visits must be in none.
+func TestDashboardBucketsPartition(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	cat, err := repo.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	hcp := cat.HCPs[0]
+	mr := pickMR(t, repo, cat)
+
+	// One of each terminal state, so the identity is checked against real rows
+	// rather than against whatever the seed happens to contain.
+	mk := func() string {
+		rec, err := repo.Create(ctx, CreateParams{
+			MRID: mr.ID, HCPID: hcp.ID, ProductID: cat.Products[0].ID,
+			PlannedAt: time.Now().Add(48 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = repo.pool.Exec(context.Background(), "DELETE FROM visit WHERE id = $1", rec.Visit.ID)
+		})
+		return rec.Visit.ID
+	}
+
+	cancelled := mk()
+	if _, err := repo.Cancel(ctx, cancelled, "test", time.Now()); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	deleted := mk()
+	if _, err := repo.Delete(ctx, deleted, time.Now()); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	dash, err := repo.Dashboard(ctx, 6, "")
+	if err != nil {
+		t.Fatalf("dashboard: %v", err)
+	}
+
+	var done, cancelledN, voided, abnormal, effective, visits int
+	for _, r := range dash.Rows {
+		done += r.Done
+		cancelledN += r.Cancelled
+		voided += r.Voided
+		abnormal += r.Abnormal
+		effective += r.Effective
+		visits += r.Visits
+	}
+
+	if visits != done+cancelledN+voided {
+		t.Fatalf("visits %d != done %d + cancelled %d + voided %d", visits, done, cancelledN, voided)
+	}
+	if done != effective+abnormal {
+		t.Fatalf("done %d != effective %d + abnormal %d", done, effective, abnormal)
+	}
+	if visits != dash.TotalVisits || done != dash.TotalDone ||
+		cancelledN != dash.TotalCancelled || voided != dash.TotalVoided {
+		t.Fatalf("row totals disagree with the dashboard totals: %+v", dash)
+	}
+
+	// The deleted visit must not appear anywhere. It was created and deleted
+	// just now, so a leak would move every number by exactly one.
+	var total int
+	if err := repo.pool.QueryRow(ctx,
+		"SELECT count(*) FROM visit WHERE id = $1 AND status = 'DELETED'", deleted).Scan(&total); err != nil {
+		t.Fatalf("count deleted: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("deleted visit is not in DELETED state")
 	}
 }

@@ -112,9 +112,14 @@ export interface MonthlyRow {
   month: string;
   productId: string;
   productName: string;
+  /** Done + cancelled + voided. Deleted visits are in none of them. */
   visits: number;
+  done: number;
+  effective: number;
   abnormal: number;
-  /** Fraction in [0, 1], not a percentage. */
+  cancelled: number;
+  voided: number;
+  /** abnormal / done. Fraction in [0, 1], not a percentage. */
   abnormalShare: number;
 }
 
@@ -122,7 +127,11 @@ export interface Dashboard {
   months: string[];
   rows: MonthlyRow[];
   totalVisits: number;
+  totalDone: number;
+  totalEffective: number;
   totalAbnormal: number;
+  totalCancelled: number;
+  totalVoided: number;
 }
 
 export interface ErrorDetails {

@@ -128,6 +128,11 @@ type Visit struct {
 	HCPFeedback          string
 	MaterialsDistributed bool
 
+	// Evaluation is the verdict together with the evidence that produced it.
+	// Nil until the visit has been judged (check-out, or a void backfill).
+	Evaluation  *Evaluation
+	RuleVersion string
+
 	// Terminal-state evidence. Exactly one group is populated, and which one is
 	// determined by Status — the database enforces the same pairing in
 	// chk_visit_state_evidence.

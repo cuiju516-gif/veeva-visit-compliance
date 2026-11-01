@@ -65,6 +65,11 @@ type visitDTO struct {
 	Abnormal bool      `json:"abnormal"`
 	Flags    []flagDTO `json:"flags"`
 
+	// Evaluation is the verdict plus its evidence (thresholds, rule version,
+	// when it was decided). Null until the visit has been judged.
+	Evaluation  *domain.Evaluation `json:"evaluation,omitempty"`
+	RuleVersion string             `json:"ruleVersion,omitempty"`
+
 	// Terminal evidence. Exactly one group is populated, matching Status — the
 	// same pairing the database enforces in chk_visit_state_evidence.
 	CancelReason string     `json:"cancelReason,omitempty"`
@@ -105,6 +110,8 @@ func toVisitDTO(rec store.Record) visitDTO {
 		BaseLng:              rec.HospitalBase.Lng,
 		PlannedAt:            v.PlannedAt,
 		Abnormal:             domain.IsAbnormal(v.Flags),
+		Evaluation:           v.Evaluation,
+		RuleVersion:          v.RuleVersion,
 		CancelReason:         v.CancelReason,
 		CancelledAt:          v.CancelledAt,
 		VoidReason:           v.VoidReason,

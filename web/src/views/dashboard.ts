@@ -19,6 +19,9 @@ interface ProductAggregate {
 }
 
 interface MonthTotals {
+  done: number;
+  cancelled: number;
+  voided: number;
   visits: number;
   abnormal: number;
 }
@@ -69,7 +72,7 @@ function buildTable(dashboard: Dashboard): HTMLElement {
 
   const monthTotals = new Map<string, MonthTotals>();
   for (const month of dashboard.months) {
-    monthTotals.set(month, { visits: 0, abnormal: 0 });
+    monthTotals.set(month, { visits: 0, done: 0, cancelled: 0, voided: 0, abnormal: 0 });
   }
 
   const tbody = el('tbody');
@@ -84,16 +87,24 @@ function buildTable(dashboard: Dashboard): HTMLElement {
       const visits = data?.visits ?? 0;
       const abnormal = data?.abnormal ?? 0;
       const share = data?.abnormalShare ?? 0;
+      const done = data?.done ?? 0;
+      const cancelled = data?.cancelled ?? 0;
+      const voided = data?.voided ?? 0;
 
       const totals = monthTotals.get(month);
       if (totals) {
         totals.visits += visits;
+        totals.done += done;
+        totals.cancelled += cancelled;
+        totals.voided += voided;
         totals.abnormal += abnormal;
       }
 
-      const cell = el('td', 'dashboard-cell', `${visits} (${formatPercent(share)})`);
+      const cell = el('td', 'dashboard-cell', `${done} / ${formatPercent(share)}`);
       if (share > 0) cell.classList.add('has-abnormal');
-      cell.title = `${month}：${visits} 次拜访，其中异常 ${abnormal} 次`;
+      cell.title =
+        `${month}：完成 ${done}（有效 ${data?.effective ?? 0} · 异常 ${abnormal}）` +
+        ` · 取消 ${cancelled} · 作废 ${voided}`;
       cell.dataset.month = month;
       cell.dataset.visits = String(visits);
       cell.dataset.abnormal = String(abnormal);
@@ -108,11 +119,11 @@ function buildTable(dashboard: Dashboard): HTMLElement {
   totalLabel.scope = 'row';
   totalRow.append(totalLabel);
   for (const month of dashboard.months) {
-    const totals = monthTotals.get(month) ?? { visits: 0, abnormal: 0 };
-    const share = totals.visits > 0 ? totals.abnormal / totals.visits : 0;
-    const cell = el('td', 'dashboard-cell', `${totals.visits} (${formatPercent(share)})`);
+    const totals = monthTotals.get(month) ?? { visits: 0, done: 0, cancelled: 0, voided: 0, abnormal: 0 };
+    const share = totals.done > 0 ? totals.abnormal / totals.done : 0;
+    const cell = el('td', 'dashboard-cell', `${totals.done} / ${formatPercent(share)}`);
     if (share > 0) cell.classList.add('has-abnormal');
-    cell.title = `${month}：${totals.visits} 次拜访，其中异常 ${totals.abnormal} 次`;
+    cell.title = `${month}：完成 ${totals.done} · 异常 ${totals.abnormal} · 取消 ${totals.cancelled} · 作废 ${totals.voided}`;
     totalRow.append(cell);
   }
   tfoot.append(totalRow);
@@ -147,16 +158,18 @@ export function mountDashboardView(host: HTMLElement, handlers: DashboardHandler
       return;
     }
 
-    const overallShare =
-      dashboard.totalVisits > 0 ? dashboard.totalAbnormal / dashboard.totalVisits : 0;
+    // The five numbers the baseline defines, in one line. The denominator of the
+    // share is "done", not "visits": cancelling more must not improve the rate.
+    const overallShare = dashboard.totalDone > 0 ? dashboard.totalAbnormal / dashboard.totalDone : 0;
     const totals = el('p', 'totals-line');
     totals.append(
       document.createTextNode(
-        `近 ${dashboard.months.length} 个月 · 共 ${dashboard.totalVisits} 次拜访 · ` +
-          `其中异常 ${dashboard.totalAbnormal} 次 · 整体异常率 `,
+        `近 ${dashboard.months.length} 个月 · 完成 ${dashboard.totalDone}` +
+          `（有效 ${dashboard.totalEffective} · 异常 ${dashboard.totalAbnormal}）· ` +
+          `取消 ${dashboard.totalCancelled} · 作废 ${dashboard.totalVoided} · 异常率 `,
       ),
       el('strong', undefined, formatPercent(overallShare)),
-      document.createTextNode('.'),
+      document.createTextNode('（删除不计入任何一项）'),
     );
 
     content.replaceChildren(buildTable(dashboard), totals);

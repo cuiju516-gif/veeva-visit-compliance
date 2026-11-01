@@ -31,11 +31,15 @@ type fakeRepo struct {
 	seq     int
 	catalog store.Catalog
 	dash    store.Dashboard
+	rule    store.RuleVersion
 }
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		records: map[string]*store.Record{},
+		rule: store.RuleVersion{
+			Version: "v1", MinDurationSeconds: 300, MaxDistanceMeters: 500,
+		},
 		catalog: store.Catalog{
 			MRs:      []store.MR{{ID: "mr-1", Name: "Chen Wei", Region: "East China"}},
 			HCPs:     []store.HCP{{ID: "hcp-1", Name: "Dr. Li Ming", HospitalName: "Ruijin Hospital", Department: "Cardiology", BaseLat: 31.2119, BaseLng: 121.4661}},
@@ -116,7 +120,7 @@ func (f *fakeRepo) CheckIn(ctx context.Context, id string, at time.Time, pos dom
 	return *rec, nil
 }
 
-func (f *fakeRepo) CheckOut(ctx context.Context, id string, at time.Time, pos domain.Coordinates, th domain.Thresholds) (store.Record, error) {
+func (f *fakeRepo) CheckOut(ctx context.Context, id string, at time.Time, pos domain.Coordinates) (store.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, ok := f.records[id]
@@ -131,10 +135,12 @@ func (f *fakeRepo) CheckOut(ctx context.Context, id string, at time.Time, pos do
 	if err != nil {
 		return store.Record{}, err
 	}
-	flags, err := domain.Evaluate(domain.EvaluationInput{
+	rules := f.rule // already holding f.mu; f.rules() would deadlock
+	evaluation, err := domain.Snapshot(domain.EvaluationInput{
 		CheckinAt: *rec.Visit.CheckinAt, CheckoutAt: at,
 		Checkin: *rec.Visit.CheckinPos, Checkout: pos,
-		HospitalBase: rec.HospitalBase, Thresholds: th,
+		HospitalBase: rec.HospitalBase, Thresholds: rules.Thresholds(),
+		RuleVersion: rules.Version, EvaluatedAt: at, Source: "checkout",
 	})
 	if err != nil {
 		return store.Record{}, err
@@ -144,7 +150,9 @@ func (f *fakeRepo) CheckOut(ctx context.Context, id string, at time.Time, pos do
 	rec.Visit.CheckoutAt = &at
 	rec.Visit.CheckoutPos = &pos
 	rec.Visit.Duration = duration
-	rec.Visit.Flags = flags
+	rec.Visit.Flags = evaluation.Flags
+	rec.Visit.Evaluation = &evaluation
+	rec.Visit.RuleVersion = rules.Version
 	rec.Visit.Version++
 	return *rec, nil
 }
@@ -650,7 +658,7 @@ func (f *fakeRepo) Cancel(ctx context.Context, id, reason string, at time.Time) 
 	return *rec, nil
 }
 
-func (f *fakeRepo) Void(ctx context.Context, id, reason string, at time.Time, th domain.Thresholds) (store.Record, error) {
+func (f *fakeRepo) Void(ctx context.Context, id, reason string, at time.Time) (store.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, ok := f.records[id]
@@ -663,7 +671,15 @@ func (f *fakeRepo) Void(ctx context.Context, id, reason string, at time.Time, th
 	if rec.Visit.Status != domain.StatusCheckedIn || rec.Visit.CheckinPos == nil {
 		return store.Record{}, &store.StateError{Status: rec.Visit.Status, Action: "void"}
 	}
-	flags, err := domain.EvaluateCheckinPoint(*rec.Visit.CheckinPos, rec.HospitalBase, th)
+	rules := f.rule // already holding f.mu; f.rules() would deadlock
+	evaluation, err := domain.SnapshotCheckinPoint(domain.EvaluationInput{
+		Checkin:      *rec.Visit.CheckinPos,
+		HospitalBase: rec.HospitalBase,
+		Thresholds:   rules.Thresholds(),
+		RuleVersion:  rules.Version,
+		EvaluatedAt:  at,
+		Source:       "void_backfill",
+	})
 	if err != nil {
 		return store.Record{}, err
 	}
@@ -671,7 +687,9 @@ func (f *fakeRepo) Void(ctx context.Context, id, reason string, at time.Time, th
 	rec.Visit.VoidReason = reason
 	rec.Visit.VoidCause = domain.VoidCauseManual
 	rec.Visit.VoidedAt = &at
-	rec.Visit.Flags = flags
+	rec.Visit.Flags = evaluation.Flags
+	rec.Visit.Evaluation = &evaluation
+	rec.Visit.RuleVersion = rules.Version
 	rec.Visit.Version++
 	return *rec, nil
 }
@@ -969,4 +987,30 @@ func TestActorScopesVisits(t *testing.T) {
 			t.Fatalf("count = %d, want 0: an unknown actor must fail closed", out.Count)
 		}
 	})
+}
+
+func (f *fakeRepo) rules() store.RuleVersion {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rule
+}
+
+func (f *fakeRepo) CurrentRules(ctx context.Context) (store.RuleVersion, error) {
+	return f.rules(), nil
+}
+
+func (f *fakeRepo) SetRules(ctx context.Context, th domain.Thresholds, by, note string) (store.RuleVersion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rule.MinDurationSeconds == th.MinDurationSeconds && f.rule.MaxDistanceMeters == th.MaxDistanceMeters {
+		return f.rule, nil
+	}
+	f.rule = store.RuleVersion{
+		Version:            "v2",
+		MinDurationSeconds: th.MinDurationSeconds,
+		MaxDistanceMeters:  th.MaxDistanceMeters,
+		CreatedBy:          by,
+		Note:               note,
+	}
+	return f.rule, nil
 }

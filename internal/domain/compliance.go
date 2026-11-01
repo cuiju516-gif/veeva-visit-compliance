@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -70,6 +71,71 @@ type EvaluationInput struct {
 	Checkout     Coordinates
 	HospitalBase Coordinates
 	Thresholds   Thresholds
+
+	// Provenance, injected by the caller. The domain never reads a clock: an
+	// evaluation that recorded time.Now() would be untestable and would make
+	// two identical inputs produce different snapshots.
+	RuleVersion string
+	EvaluatedAt time.Time
+	Source      string
+}
+
+// Evaluation is the snapshot stored on a visit: the verdict *and* the evidence
+// that produced it. Thresholds and rule version are copied in on purpose — if
+// an administrator later edits a rule_version row, the snapshot still says what
+// was actually applied.
+type Evaluation struct {
+	DurationSec  *int64    `json:"durationSec"`
+	DistanceInM  *float64  `json:"distanceInM"`
+	DistanceOutM *float64  `json:"distanceOutM"`
+	Flags        []Flag    `json:"flags"`
+	Abnormal     bool      `json:"abnormal"`
+	Thresholds   Thresholds `json:"thresholds"`
+	RuleVersion  string    `json:"ruleVersion"`
+	EvaluatedAt  time.Time `json:"evaluatedAt"`
+	Source       string    `json:"source"`
+}
+
+// ThresholdsJSON is the wire shape of the thresholds inside a snapshot. The Go
+// field names are not the contract's field names, so the mapping is explicit
+// rather than left to the default encoder.
+type thresholdsJSON struct {
+	MinDurationSec int     `json:"minDurationSec"`
+	MaxDistanceM   float64 `json:"maxDistanceM"`
+}
+
+// MarshalJSON pins the snapshot's shape: the API contract names these fields,
+// and a rename here would silently change stored history.
+func (e Evaluation) MarshalJSON() ([]byte, error) {
+	type alias struct {
+		DurationSec  *int64         `json:"durationSec"`
+		DistanceInM  *float64       `json:"distanceInM"`
+		DistanceOutM *float64       `json:"distanceOutM"`
+		Flags        []Flag         `json:"flags"`
+		Abnormal     bool           `json:"abnormal"`
+		Thresholds   thresholdsJSON `json:"thresholds"`
+		RuleVersion  string         `json:"ruleVersion"`
+		EvaluatedAt  time.Time      `json:"evaluatedAt"`
+		Source       string         `json:"source"`
+	}
+	flags := e.Flags
+	if flags == nil {
+		flags = []Flag{}
+	}
+	return json.Marshal(alias{
+		DurationSec:  e.DurationSec,
+		DistanceInM:  e.DistanceInM,
+		DistanceOutM: e.DistanceOutM,
+		Flags:        flags,
+		Abnormal:     e.Abnormal,
+		Thresholds: thresholdsJSON{
+			MinDurationSec: e.Thresholds.MinDurationSeconds,
+			MaxDistanceM:   e.Thresholds.MaxDistanceMeters,
+		},
+		RuleVersion: e.RuleVersion,
+		EvaluatedAt: e.EvaluatedAt,
+		Source:      e.Source,
+	})
 }
 
 // Deviation describes one point that is too far from the hospital.
@@ -137,6 +203,38 @@ func Evaluate(in EvaluationInput) ([]Flag, error) {
 	return flags, nil
 }
 
+// Snapshot runs the rules and returns the verdict together with the evidence
+// that produced it: the distances, the thresholds, the rule version and when it
+// was decided. This is what gets stored on the visit.
+//
+// The comparison itself stays in Evaluate; this only captures its inputs.
+func Snapshot(in EvaluationInput) (Evaluation, error) {
+	flags, err := Evaluate(in)
+	if err != nil {
+		return Evaluation{}, err
+	}
+
+	duration, err := StayDuration(in.CheckinAt, in.CheckoutAt)
+	if err != nil {
+		return Evaluation{}, err
+	}
+	durationSec := int64(duration / time.Second)
+	distanceIn := HaversineMeters(in.Checkin, in.HospitalBase)
+	distanceOut := HaversineMeters(in.Checkout, in.HospitalBase)
+
+	return Evaluation{
+		DurationSec:  &durationSec,
+		DistanceInM:  &distanceIn,
+		DistanceOutM: &distanceOut,
+		Flags:        flags,
+		Abnormal:     IsAbnormal(flags),
+		Thresholds:   in.Thresholds,
+		RuleVersion:  in.RuleVersion,
+		EvaluatedAt:  in.EvaluatedAt,
+		Source:       in.Source,
+	}, nil
+}
+
 // IsAbnormal reports whether any rule fired.
 func IsAbnormal(flags []Flag) bool { return len(flags) > 0 }
 
@@ -188,4 +286,68 @@ func EvaluateCheckinPoint(checkin, base Coordinates, th Thresholds) ([]Flag, err
 		Detail: fmt.Sprintf("check-in was %.0f m from the hospital, limit is %.0f m",
 			distance, th.MaxDistanceMeters),
 	}}, nil
+}
+
+// SnapshotCheckinPoint is the void-path counterpart of Snapshot. A voided visit
+// has a check-in and no check-out, so there is no duration and R1 cannot be
+// evaluated; the location rule still can, and the snapshot records that this
+// verdict came from a backfill rather than from a check-out.
+func SnapshotCheckinPoint(in EvaluationInput) (Evaluation, error) {
+	flags, err := EvaluateCheckinPoint(in.Checkin, in.HospitalBase, in.Thresholds)
+	if err != nil {
+		return Evaluation{}, err
+	}
+	distanceIn := HaversineMeters(in.Checkin, in.HospitalBase)
+
+	return Evaluation{
+		DurationSec:  nil, // no check-out, so no duration: not "zero", unknown
+		DistanceInM:  &distanceIn,
+		DistanceOutM: nil,
+		Flags:        flags,
+		Abnormal:     IsAbnormal(flags),
+		Thresholds:   in.Thresholds,
+		RuleVersion:  in.RuleVersion,
+		EvaluatedAt:  in.EvaluatedAt,
+		Source:       in.Source,
+	}, nil
+}
+
+// UnmarshalJSON is the inverse of MarshalJSON. It exists because the stored
+// shape uses the contract's field names (minDurationSec), which do not match the
+// Go field names on Thresholds — without it the thresholds silently decode as
+// zero, and a snapshot that says "300 s" would read back as "0 s".
+func (e *Evaluation) UnmarshalJSON(data []byte) error {
+	type alias struct {
+		DurationSec  *int64         `json:"durationSec"`
+		DistanceInM  *float64       `json:"distanceInM"`
+		DistanceOutM *float64       `json:"distanceOutM"`
+		Flags        []Flag         `json:"flags"`
+		Abnormal     bool           `json:"abnormal"`
+		Thresholds   thresholdsJSON `json:"thresholds"`
+		RuleVersion  string         `json:"ruleVersion"`
+		EvaluatedAt  time.Time      `json:"evaluatedAt"`
+		Source       string         `json:"source"`
+	}
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*e = Evaluation{
+		DurationSec:  a.DurationSec,
+		DistanceInM:  a.DistanceInM,
+		DistanceOutM: a.DistanceOutM,
+		Flags:        a.Flags,
+		Abnormal:     a.Abnormal,
+		Thresholds: Thresholds{
+			MinDurationSeconds: a.Thresholds.MinDurationSec,
+			MaxDistanceMeters:  a.Thresholds.MaxDistanceM,
+		},
+		RuleVersion: a.RuleVersion,
+		EvaluatedAt: a.EvaluatedAt,
+		Source:      a.Source,
+	}
+	if e.Flags == nil {
+		e.Flags = []Flag{}
+	}
+	return nil
 }

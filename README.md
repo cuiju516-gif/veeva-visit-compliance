@@ -108,7 +108,9 @@ never out) is reported as *incomplete* rather than *compliant*.
 | `DELETE` | `/api/visits/{id}` | Logical delete → `204`; only inside the planning window |
 | `GET` | `/api/visits/{id}` | Full visit incl. flags |
 | `GET` | `/api/visits` | List with filters |
-| `GET` | `/api/dashboard/monthly` | Visits per product per month + abnormal share |
+| `GET` | `/api/dashboard/monthly` | Per product per month: done / effective / abnormal / cancelled / voided |
+| `GET` | `/api/admin/rules` | Current threshold version (admin only) |
+| `PUT` | `/api/admin/rules` | New version when the thresholds change (admin only) |
 | `GET` | `/healthz` | Liveness/readiness |
 
 ## Design decisions
@@ -121,8 +123,12 @@ never out) is reported as *incomplete* rather than *compliant*.
   the audit trail keeps every rule that fired.
 - **Server owns the clock.** `checkin_at`/`checkout_at` are `now()` from the DB, and duration is
   derived — never accepted from the client.
-- **Dashboard counts by check-in month** in `Asia/Shanghai`, and reports abnormal share rather
-  than hiding non-compliant visits.
+- **Dashboard counts by check-in month** in `Asia/Shanghai`. It reports the five numbers the
+  baseline defines — done / effective / abnormal / cancelled / voided — with the abnormal share
+  over *done*, so cancelling more cannot improve the rate. Deleted visits are in none of them.
+- **Thresholds are versioned in the database**, not in the process config. A check-out records the
+  rule version and the thresholds it applied, so changing 300 s to 600 s cannot rewrite a past
+  verdict; `PUT /api/admin/rules` creates a new version only when the numbers actually change.
 - **Visits carry their own snapshot** of the doctor, department, hospital, base coordinates and
   product. Reads never join master data, so renaming a doctor or taking a hospital off the list
   cannot rewrite history; master rows are logically deleted, never removed.
