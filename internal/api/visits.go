@@ -49,6 +49,21 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err)
 		return
 	}
+
+	// A rep gets exactly one MR in the catalog: themselves. The full list is
+	// only useful to the administrator (who may plan on anyone's behalf), and
+	// handing every rep a roster of colleagues is a leak with no upside — the
+	// form cannot use it, because creating for someone else is a 403.
+	if actor := actorFrom(r.Context()); !actor.IsAdmin() {
+		own := make([]store.MR, 0, 1)
+		for _, m := range cat.MRs {
+			if m.ID == actor.MRID {
+				own = append(own, m)
+			}
+		}
+		cat.MRs = own
+	}
+
 	writeJSON(w, http.StatusOK, cat)
 }
 

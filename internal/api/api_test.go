@@ -1199,3 +1199,43 @@ func TestRepCannotMutateAnotherRepsVisit(t *testing.T) {
 		t.Fatalf("the other rep's checked-in visit was modified")
 	}
 }
+
+func TestCatalogOnlyListsTheActor(t *testing.T) {
+	h := newHarness(t)
+	h.repo.catalog.MRs = []store.MR{
+		{ID: "mr-1", Name: "张伟", Region: "华东一区"},
+		{ID: "mr-2", Name: "李娜", Region: "华东一区"},
+	}
+
+	t.Run("a rep sees only themselves", func(t *testing.T) {
+		resp, raw := h.doAs("mr-1", http.MethodGet, "/api/catalog", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d; body %s", resp.StatusCode, raw)
+		}
+		var cat store.Catalog
+		if err := json.Unmarshal(raw, &cat); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(cat.MRs) != 1 || cat.MRs[0].ID != "mr-1" {
+			t.Fatalf("rep catalog lists %+v, want only mr-1", cat.MRs)
+		}
+		// The reference data a rep legitimately needs is untouched.
+		if len(cat.HCPs) == 0 || len(cat.Products) == 0 {
+			t.Fatalf("reference data was filtered too: %+v", cat)
+		}
+	})
+
+	t.Run("the admin sees everyone", func(t *testing.T) {
+		resp, raw := h.doAs("admin", http.MethodGet, "/api/catalog", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d; body %s", resp.StatusCode, raw)
+		}
+		var cat store.Catalog
+		if err := json.Unmarshal(raw, &cat); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(cat.MRs) != 2 {
+			t.Fatalf("admin catalog lists %d reps, want 2", len(cat.MRs))
+		}
+	})
+}
