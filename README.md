@@ -23,11 +23,10 @@ proves the visit actually happened and happened compliantly:
 docker compose up --build
 ```
 
-> **What has actually been verified**: the compose file, the Dockerfile, the
-> cross-compiled linux binary and the app running against a compose-shaped
-> database — but **not** the image build itself: this machine has no container
-> runtime. See [`docs/部署验证.md`](docs/部署验证.md) for what was checked, how,
-> and what is still open.
+> **Verified end to end in a container**: `docker compose up --build` builds the
+> image and brings up app + Postgres, both healthy; the ten acceptance criteria
+> pass against the compose stack. See [`docs/部署验证.md`](docs/部署验证.md) for
+> the evidence and for how the runtime was set up on a machine that had none.
 
 Then open <http://localhost:8080>. The database is created, migrated and seeded on first start;
 the UI walks you through the five steps below.
