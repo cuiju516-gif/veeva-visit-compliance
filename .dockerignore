@@ -16,6 +16,8 @@ web/dist
 # Local-only material.
 demo
 shots
+.tools-run
 .chrome-profile
+*.log
 *.pdf
 .DS_Store

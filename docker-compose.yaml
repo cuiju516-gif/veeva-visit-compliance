@@ -32,7 +32,6 @@ services:
       # Compliance thresholds are not environment variables any more: they live
       # in rule_version and change through /api/admin/rules at runtime. The
       # migration seeds v1 (300 s / 500 m) on first start.
-
       TZ: Asia/Shanghai
     ports:
       - "8080:8080"

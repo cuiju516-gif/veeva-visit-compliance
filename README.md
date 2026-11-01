@@ -23,6 +23,12 @@ proves the visit actually happened and happened compliantly:
 docker compose up --build
 ```
 
+> **What has actually been verified**: the compose file, the Dockerfile, the
+> cross-compiled linux binary and the app running against a compose-shaped
+> database — but **not** the image build itself: this machine has no container
+> runtime. See [`docs/部署验证.md`](docs/部署验证.md) for what was checked, how,
+> and what is still open.
+
 Then open <http://localhost:8080>. The database is created, migrated and seeded on first start;
 the UI walks you through the five steps below.
 
