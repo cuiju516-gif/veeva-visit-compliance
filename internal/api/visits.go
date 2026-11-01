@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -181,6 +182,10 @@ func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
+	if !s.authorizeVisit(w, r, ctx) {
+		return
+	}
+
 	rec, err := s.repo.CheckIn(ctx, r.PathValue("id"), s.now(), pos)
 	if err != nil {
 		s.handleError(w, r, err)
@@ -198,6 +203,10 @@ func (s *Server) handleCheckOut(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
+
+	if !s.authorizeVisit(w, r, ctx) {
+		return
+	}
 
 	// Duration and flags are derived inside the repository from stored
 	// timestamps. Nothing about them comes off the wire.
@@ -254,6 +263,10 @@ func (s *Server) handleSubmitReport(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
+	if !s.authorizeVisit(w, r, ctx) {
+		return
+	}
+
 	rec, err := s.repo.SubmitReport(ctx, r.PathValue("id"), store.ReportParams{
 		TalkingPoints:        strings.TrimSpace(req.TalkingPoints),
 		HCPFeedback:          strings.TrimSpace(req.HCPFeedback),
@@ -309,6 +322,29 @@ func (s *Server) decodePosition(w http.ResponseWriter, r *http.Request) (domain.
 	return pos, nil
 }
 
+// authorizeVisit enforces "you may only touch your own visits".
+//
+// It is one function rather than a check per handler because this is exactly the
+// kind of rule that gets forgotten in the seventh handler: the first version of
+// this API scoped the *list* by actor and then let anyone mutate any id. The
+// admin is exempt on purpose — that role exists to see everything, not to change
+// a rep's evidence, so mutations stay rep-only and every check below is the
+// same check.
+func (s *Server) authorizeVisit(w http.ResponseWriter, r *http.Request, ctx context.Context) bool {
+	id := r.PathValue("id")
+	rec, err := s.repo.Get(ctx, id)
+	if err != nil {
+		s.handleError(w, r, err)
+		return false
+	}
+	actor := actorFrom(r.Context())
+	if !actor.IsAdmin() && rec.Visit.MRID != actor.MRID {
+		s.fail(w, http.StatusForbidden, CodeForbidden, "this visit belongs to another rep", nil)
+		return false
+	}
+	return true
+}
+
 // --- terminal transitions -------------------------------------------------
 
 // reasonRequest is the body of cancel and void.
@@ -350,6 +386,10 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
+	if !s.authorizeVisit(w, r, ctx) {
+		return
+	}
+
 	rec, err := s.repo.Cancel(ctx, r.PathValue("id"), reason, s.now())
 	if err != nil {
 		s.handleError(w, r, err)
@@ -366,6 +406,10 @@ func (s *Server) handleVoid(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
+	if !s.authorizeVisit(w, r, ctx) {
+		return
+	}
+
 	rec, err := s.repo.Void(ctx, r.PathValue("id"), reason, s.now())
 	if err != nil {
 		s.handleError(w, r, err)
@@ -378,6 +422,10 @@ func (s *Server) handleVoid(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
+
+	if !s.authorizeVisit(w, r, ctx) {
+		return
+	}
 
 	if _, err := s.repo.Delete(ctx, r.PathValue("id"), s.now()); err != nil {
 		s.handleError(w, r, err)

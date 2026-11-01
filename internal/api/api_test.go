@@ -200,7 +200,15 @@ func newHarness(t *testing.T) *harness {
 	return &harness{t: t, server: srv, repo: repo, http: ts}
 }
 
+// do sends a request as the test's default rep. Most tests were written before
+// the actor header existed and mean "a rep acting on their own visits", which is
+// exactly mr-1 — the id newFakeRepo hands out and createPlanned posts.
 func (h *harness) do(method, path string, body any) (*http.Response, []byte) {
+	h.t.Helper()
+	return h.doAs("mr-1", method, path, body)
+}
+
+func (h *harness) doAs(actor, method, path string, body any) (*http.Response, []byte) {
 	h.t.Helper()
 	var buf io.Reader
 	if body != nil {
@@ -215,6 +223,9 @@ func (h *harness) do(method, path string, body any) (*http.Response, []byte) {
 		h.t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if actor != "" {
+		req.Header.Set("X-Actor", actor)
+	}
 	resp, err := h.http.Client().Do(req)
 	if err != nil {
 		h.t.Fatalf("do request: %v", err)
@@ -888,38 +899,6 @@ func TestDeleteWindowEnforced(t *testing.T) {
 
 // --- actor scoping --------------------------------------------------------
 
-func (h *harness) doAs(actor, method, path string, body any) (*http.Response, []byte) {
-	h.t.Helper()
-	var reader io.Reader
-	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil {
-			h.t.Fatalf("marshal: %v", err)
-		}
-		reader = bytes.NewReader(raw)
-	}
-	req, err := http.NewRequest(method, h.http.URL+path, reader)
-	if err != nil {
-		h.t.Fatalf("new request: %v", err)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if actor != "" {
-		req.Header.Set("X-Actor", actor)
-	}
-	resp, err := h.http.Client().Do(req)
-	if err != nil {
-		h.t.Fatalf("%s %s: %v", method, path, err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		h.t.Fatalf("read body: %v", err)
-	}
-	return resp, raw
-}
-
 func TestActorScopesVisits(t *testing.T) {
 	h := newHarness(t)
 
@@ -1163,4 +1142,60 @@ func TestRepCannotPlanForAnotherRep(t *testing.T) {
 			t.Fatalf("status = %d, want 201; body %s", resp.StatusCode, raw)
 		}
 	})
+}
+
+// TestRepCannotMutateAnotherRepsVisit covers the whole mutation surface, not just
+// create: the first version scoped the list by actor and then let any id be
+// mutated, so a rep could check out someone else's visit.
+func TestRepCannotMutateAnotherRepsVisit(t *testing.T) {
+	h := newHarness(t)
+
+	other := domain.Visit{
+		ID: "visit-mr2", MRID: "mr-2", HCPID: "hcp-1", ProductID: "prod-1",
+		PlannedAt: time.Now().Add(24 * time.Hour), Status: domain.StatusPlanned,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(), Version: 1,
+	}
+	h.repo.records[other.ID] = &store.Record{Visit: other, MRName: "李娜"}
+	checkin := time.Now().Add(-time.Hour)
+	checkedIn := domain.Visit{
+		ID: "visit-mr2-in", MRID: "mr-2", HCPID: "hcp-1", ProductID: "prod-1",
+		PlannedAt: time.Now().Add(-2 * time.Hour), Status: domain.StatusCheckedIn,
+		CheckinAt: &checkin, CheckinPos: &domain.Coordinates{Lat: 31.2119, Lng: 121.4661},
+		CreatedAt: time.Now().Add(-3 * time.Hour), UpdatedAt: time.Now(), Version: 2,
+	}
+	h.repo.records[checkedIn.ID] = &store.Record{Visit: checkedIn, MRName: "李娜"}
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   any
+	}{
+		{"check in", http.MethodPost, "/api/visits/visit-mr2/checkin", map[string]any{"lat": 31.2, "lng": 121.4}},
+		{"check out", http.MethodPost, "/api/visits/visit-mr2-in/checkout", map[string]any{"lat": 31.2, "lng": 121.4}},
+		{"report", http.MethodPut, "/api/visits/visit-mr2-in/report", map[string]any{"talkingPoints": "x"}},
+		{"cancel", http.MethodPost, "/api/visits/visit-mr2/cancel", map[string]any{"reason": "x"}},
+		{"void", http.MethodPost, "/api/visits/visit-mr2-in/void", map[string]any{"reason": "x"}},
+		{"delete", http.MethodDelete, "/api/visits/visit-mr2", nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, raw := h.doAs("mr-1", tc.method, tc.path, tc.body)
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body %s", resp.StatusCode, raw)
+			}
+			if e := h.decodeError(raw); e.Code != CodeForbidden {
+				t.Fatalf("code = %q, want forbidden", e.Code)
+			}
+		})
+	}
+
+	// Nothing above may have changed the rows.
+	if h.repo.records["visit-mr2"].Visit.Status != domain.StatusPlanned {
+		t.Fatalf("the other rep's plan was modified")
+	}
+	if h.repo.records["visit-mr2-in"].Visit.Status != domain.StatusCheckedIn {
+		t.Fatalf("the other rep's checked-in visit was modified")
+	}
 }
