@@ -19,6 +19,9 @@ const STATUS_LABELS: Record<VisitStatus, string> = {
   CHECKED_IN: 'Checked in',
   CHECKED_OUT: 'Checked out',
   REPORTED: 'Reported',
+  CANCELLED: 'Cancelled',
+  VOIDED: 'Voided',
+  DELETED: 'Deleted',
 };
 
 export function formatStatus(status: VisitStatus): string {
@@ -133,6 +136,9 @@ export function isVisitStatus(value: string): value is VisitStatus {
     value === 'PLANNED' ||
     value === 'CHECKED_IN' ||
     value === 'CHECKED_OUT' ||
-    value === 'REPORTED'
+    value === 'REPORTED' ||
+    value === 'CANCELLED' ||
+    value === 'VOIDED' ||
+    value === 'DELETED'
   );
 }

@@ -17,6 +17,10 @@ var (
 	// ErrConcurrentUpdate means the optimistic lock lost: someone else wrote
 	// the row between our read and our write.
 	ErrConcurrentUpdate = errors.New("concurrent update")
+	// ErrReasonRequired means a cancel or void arrived without a reason. The API
+	// rejects it first; the store refuses as well so that no other caller can
+	// write a terminal row that cannot be explained.
+	ErrReasonRequired = errors.New("reason is required")
 	// ErrAlreadyCheckedIn means the rep is already checked in somewhere else.
 	// A rep cannot be in two hospitals at once (uq_visit_mr_active), and a client
 	// that opens two tabs gets a conflict rather than a server error.
@@ -125,6 +129,9 @@ type Repo interface {
 	CheckIn(ctx context.Context, id string, at time.Time, pos domain.Coordinates) (Record, error)
 	CheckOut(ctx context.Context, id string, at time.Time, pos domain.Coordinates, th domain.Thresholds) (Record, error)
 	SubmitReport(ctx context.Context, id string, p ReportParams) (Record, error)
+	Cancel(ctx context.Context, id, reason string, at time.Time) (Record, error)
+	Void(ctx context.Context, id, reason string, at time.Time, th domain.Thresholds) (Record, error)
+	Delete(ctx context.Context, id string, now time.Time) (Record, error)
 	Dashboard(ctx context.Context, months int) (Dashboard, error)
 }
 
@@ -139,6 +146,19 @@ type StateError struct {
 func (e *StateError) Error() string {
 	return "visit is " + string(e.Status) + ", cannot " + e.Action
 }
+
+// DeleteWindowError reports a refused delete with the specific condition that
+// failed. It satisfies errors.Is(err, ErrInvalidState) so the API maps it to 409
+// without a second mapping table.
+type DeleteWindowError struct {
+	Reason string
+}
+
+func (e *DeleteWindowError) Error() string { return "delete window closed: " + e.Reason }
+
+// Is makes a closed window a flavour of invalid state: the client reacts the
+// same way (reload the visit, offer cancel instead), and it is not a 400.
+func (e *DeleteWindowError) Is(target error) bool { return target == ErrInvalidState }
 
 // Is keeps errors.Is(err, ErrInvalidState) working for callers that only care
 // about the class of error.

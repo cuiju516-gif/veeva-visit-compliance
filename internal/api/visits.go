@@ -286,3 +286,80 @@ func (s *Server) decodePosition(w http.ResponseWriter, r *http.Request) (domain.
 	}
 	return pos, nil
 }
+
+// --- terminal transitions -------------------------------------------------
+
+// reasonRequest is the body of cancel and void.
+//
+// It is a separate type from positionRequest on purpose: DisallowUnknownFields
+// turns "I sent lat/lng to /cancel" into a 400 instead of a silently ignored
+// coordinate, which is the difference between a broken client and a visit that
+// was cancelled at a position nobody recorded.
+type reasonRequest struct {
+	Reason string `json:"reason"`
+}
+
+const maxReasonRunes = 500
+
+// decodeReason reads and validates the reason shared by cancel and void.
+func (s *Server) decodeReason(w http.ResponseWriter, r *http.Request, action string) (string, bool) {
+	var req reasonRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		s.handleError(w, r, err)
+		return "", false
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		s.handleError(w, r, invalidField("reason", "a reason is required to %s a visit", action))
+		return "", false
+	}
+	if utf8.RuneCountInString(reason) > maxReasonRunes {
+		s.handleError(w, r, invalidField("reason", "reason is limited to %d characters", maxReasonRunes))
+		return "", false
+	}
+	return reason, true
+}
+
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	reason, ok := s.decodeReason(w, r, "cancel")
+	if !ok {
+		return
+	}
+	ctx, cancel := s.contextWithTimeout(r)
+	defer cancel()
+
+	rec, err := s.repo.Cancel(ctx, r.PathValue("id"), reason, s.now())
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toVisitDTO(rec))
+}
+
+func (s *Server) handleVoid(w http.ResponseWriter, r *http.Request) {
+	reason, ok := s.decodeReason(w, r, "void")
+	if !ok {
+		return
+	}
+	ctx, cancel := s.contextWithTimeout(r)
+	defer cancel()
+
+	rec, err := s.repo.Void(ctx, r.PathValue("id"), reason, s.now(), s.thresholds)
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toVisitDTO(rec))
+}
+
+// handleDelete is a logical delete: 204, and the row is still there.
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := s.contextWithTimeout(r)
+	defer cancel()
+
+	if _, err := s.repo.Delete(ctx, r.PathValue("id"), s.now()); err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -24,6 +24,15 @@ const (
 	StatusCheckedOut Status = "CHECKED_OUT"
 	// StatusReported means the call report has been filed. Flags may still exist.
 	StatusReported Status = "REPORTED"
+	// StatusCancelled means the plan never happened. It carries a reason, has no
+	// check-in, and counts as "cancelled" rather than "completed".
+	StatusCancelled Status = "CANCELLED"
+	// StatusVoided means the rep attended but the visit does not count. There is
+	// a check-in and never a check-out, so it has no duration and R1 cannot run.
+	StatusVoided Status = "VOIDED"
+	// StatusDeleted is a correction: the plan should never have existed. It is
+	// kept as a row so the denominator of "planned" cannot be shrunk silently.
+	StatusDeleted Status = "DELETED"
 )
 
 // Event is something a rep asks the system to do to a visit.
@@ -33,6 +42,9 @@ const (
 	EventCheckIn  Event = "checkin"
 	EventCheckOut Event = "checkout"
 	EventReport   Event = "report"
+	EventCancel   Event = "cancel"
+	EventVoid     Event = "void"
+	EventDelete   Event = "delete"
 )
 
 // transitions is the whole state machine, in one place.
@@ -40,8 +52,17 @@ const (
 // Records are (state, event) -> next state. Any pair not listed here is an
 // illegal transition and is rejected by Apply.
 var transitions = map[Status]map[Event]Status{
-	StatusPlanned:    {EventCheckIn: StatusCheckedIn},
-	StatusCheckedIn:  {EventCheckOut: StatusCheckedOut},
+	StatusPlanned: {
+		EventCheckIn: StatusCheckedIn,
+		EventCancel:  StatusCancelled,
+		EventDelete:  StatusDeleted,
+	},
+	StatusCheckedIn: {
+		EventCheckOut: StatusCheckedOut,
+		// Voiding is only possible before check-out: once the compliance verdict
+		// exists, letting the rep undo it would make the verdict advisory.
+		EventVoid: StatusVoided,
+	},
 	StatusCheckedOut: {EventReport: StatusReported},
 }
 
@@ -107,9 +128,65 @@ type Visit struct {
 	HCPFeedback          string
 	MaterialsDistributed bool
 
+	// Terminal-state evidence. Exactly one group is populated, and which one is
+	// determined by Status — the database enforces the same pairing in
+	// chk_visit_state_evidence.
+	CancelReason string
+	CancelledAt  *time.Time
+	VoidReason   string
+	VoidCause    string
+	VoidedAt     *time.Time
+	DeletedAt    *time.Time
+	ReportedAt   *time.Time
+
 	// Version is the optimistic lock counter, bumped by the store on every
 	// write. CreatedAt and UpdatedAt are database bookkeeping.
 	Version   int
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// Void causes. The dashboard distinguishes "the rep decided not to count it"
+// from "nobody came back to check out".
+const (
+	VoidCauseManual  = "MANUAL"
+	VoidCauseTimeout = "TIMEOUT"
+)
+
+// DeleteWindowOpen reports whether a PLANNED visit may still be deleted.
+//
+// Deleting is the only operation that can shrink the "planned" denominator, so
+// it gets a narrow window: shortly after creation (it was a mistake, not a
+// change of plan) and well before the visit was due to start. Outside the
+// window the rep must cancel instead, which keeps a reason and a counter.
+func DeleteWindowOpen(createdAt, plannedAt, now time.Time) bool {
+	return now.Before(plannedAt.Add(-time.Hour)) && !now.After(createdAt.Add(time.Hour))
+}
+
+// DeleteWindowReport explains, in the same units the UI shows, why the window
+// is closed. Returning this instead of a bare bool keeps the 409 message honest.
+func DeleteWindowReport(createdAt, plannedAt, now time.Time) string {
+	const layout = "2006-01-02 15:04"
+	switch {
+	case !now.Before(plannedAt.Add(-time.Hour)):
+		// Checked first: it is the condition the rep cannot fix by acting
+		// sooner, so it is the more useful thing to say.
+		return "plan starts within an hour (" + plannedAt.Format(layout) + "); cancel instead of deleting"
+	case now.After(createdAt.Add(time.Hour)):
+		return "created more than an hour ago (" + createdAt.Format(layout) + "); cancel instead of deleting"
+	default:
+		return ""
+	}
+}
+
+// CanCancel reports whether the plan may be cancelled. A cancelled visit keeps
+// a reason and a counter, which is why it is preferred over deleting.
+func CanCancel(s Status) bool { _, err := Apply(s, EventCancel); return err == nil }
+
+// CanVoid reports whether the visit may be voided. Only legal before check-out.
+func CanVoid(s Status) bool { _, err := Apply(s, EventVoid); return err == nil }
+
+// CanDelete reports whether the visit may be deleted. The time window is not
+// part of the state machine — it depends on the clock, not on the state — so
+// callers must also consult DeleteWindowOpen.
+func CanDelete(s Status) bool { _, err := Apply(s, EventDelete); return err == nil }

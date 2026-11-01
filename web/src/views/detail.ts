@@ -10,6 +10,9 @@ export interface DetailHandlers {
   onCheckIn(visitId: string, position: Position): Promise<void>;
   onCheckOut(visitId: string, position: Position): Promise<void>;
   onSubmitReport(visitId: string, report: ReportInput): Promise<void>;
+  onCancel(visitId: string, reason: string): Promise<void>;
+  onVoid(visitId: string, reason: string): Promise<void>;
+  onDelete(visitId: string): Promise<void>;
 }
 
 export interface DetailView {
@@ -35,6 +38,11 @@ const STEP_STATES: Record<VisitStatus, Array<'done' | 'current' | 'pending'>> = 
   CHECKED_IN: ['done', 'done', 'current', 'pending', 'pending'],
   CHECKED_OUT: ['done', 'done', 'done', 'done', 'current'],
   REPORTED: ['done', 'done', 'done', 'done', 'done'],
+  // Terminal states ended early: the steps that did not happen stay pending, and
+  // no step is "current" because the visit will not advance any further.
+  CANCELLED: ['done', 'pending', 'pending', 'pending', 'pending'],
+  VOIDED: ['done', 'done', 'pending', 'pending', 'pending'],
+  DELETED: ['done', 'pending', 'pending', 'pending', 'pending'],
 };
 
 const TEMPLATE = `
@@ -155,6 +163,26 @@ const TEMPLATE = `
           </div>
         </form>
       </section>
+
+      <section class="card detail-card" data-terminal-card aria-labelledby="terminal-heading">
+        <div class="step-head">
+          <div>
+            <p class="step-kicker">End the visit early</p>
+            <h3 id="terminal-heading">Cancel or void</h3>
+          </div>
+        </div>
+        <p class="hint" data-terminal-hint></p>
+        <div class="field">
+          <label for="terminal-reason">Reason (required for cancel and void)</label>
+          <textarea id="terminal-reason" data-testid="terminal-reason" rows="2" maxlength="500"></textarea>
+        </div>
+        <div data-terminal-banner></div>
+        <div class="form-actions">
+          <button class="btn btn-small" type="button" data-testid="cancel-submit" data-cancel-submit>Cancel plan</button>
+          <button class="btn btn-small" type="button" data-testid="void-submit" data-void-submit>Void visit</button>
+          <button class="btn btn-small btn-danger" type="button" data-testid="delete-submit" data-delete-submit>Delete plan</button>
+        </div>
+      </section>
     </div>
   </section>
 `;
@@ -234,12 +262,20 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
   const reportSubmit = must<HTMLButtonElement>(host, '[data-testid="report-submit"]');
   const reportHint = must<HTMLElement>(host, '[data-report-hint]');
 
+  const terminalReason = must<HTMLTextAreaElement>(host, '[data-testid="terminal-reason"]');
+  const cancelSubmit = must<HTMLButtonElement>(host, '[data-cancel-submit]');
+  const voidSubmit = must<HTMLButtonElement>(host, '[data-void-submit]');
+  const deleteSubmit = must<HTMLButtonElement>(host, '[data-delete-submit]');
+  const terminalHint = must<HTMLElement>(host, '[data-terminal-hint]');
+
   const detailBanner = createErrorBanner();
   must<HTMLElement>(host, '[data-detail-banner]').append(detailBanner.element);
   const checkinBanner = createErrorBanner();
   must<HTMLElement>(host, '[data-checkin-banner]').append(checkinBanner.element);
   const checkoutBanner = createErrorBanner();
   must<HTMLElement>(host, '[data-checkout-banner]').append(checkoutBanner.element);
+  const terminalBanner = createErrorBanner();
+  must<HTMLElement>(host, '[data-terminal-banner]').append(terminalBanner.element);
   const reportBanner = createErrorBanner();
   must<HTMLElement>(host, '[data-report-banner]').append(reportBanner.element);
 
@@ -444,6 +480,12 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     checkinSubmit.disabled = !visit.capabilities.canCheckIn || busy;
     checkoutSubmit.disabled = !visit.capabilities.canCheckOut || busy;
     reportSubmit.disabled = !visit.capabilities.canReport || busy;
+    cancelSubmit.disabled = !visit.capabilities.canCancel || busy;
+    voidSubmit.disabled = !visit.capabilities.canVoid || busy;
+    // canDelete is the state machine's answer; the time window is the server's
+    // to enforce, and a refused delete comes back as a 409 with the reason.
+    deleteSubmit.disabled = !visit.capabilities.canDelete || busy;
+    terminalReason.disabled = !(visit.capabilities.canCancel || visit.capabilities.canVoid) || busy;
 
     if (visit.capabilities.canCheckIn) {
       checkinHint.textContent = 'Uses the server clock; coordinates are stored as entered.';
@@ -467,6 +509,20 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
       reportHint.textContent = 'Report filed.';
     } else {
       reportHint.textContent = 'Available after check-out.';
+    }
+
+    if (visit.capabilities.canCancel) {
+      terminalHint.textContent = 'Cancelling keeps a reason and counts as cancelled; deleting is for mistakes and only works briefly after planning.';
+    } else if (visit.capabilities.canVoid) {
+      terminalHint.textContent = 'Voiding keeps the check-in evidence and re-runs the location rule, so an abnormal visit stays abnormal.';
+    } else if (visit.status === 'VOIDED' && visit.voidReason) {
+      terminalHint.textContent = `Voided: ${visit.voidReason}`;
+    } else if (visit.status === 'CANCELLED' && visit.cancelReason) {
+      terminalHint.textContent = `Cancelled: ${visit.cancelReason}`;
+    } else if (visit.status === 'DELETED') {
+      terminalHint.textContent = 'Deleted: the row is kept, the visit leaves every count.';
+    } else {
+      terminalHint.textContent = 'Nothing to cancel, void or delete in this state.';
     }
   }
 
@@ -509,6 +565,38 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     }
     checkoutBanner.clear();
     void handlers.onCheckOut(currentVisit.id, position);
+  });
+
+  cancelSubmit.addEventListener('click', () => {
+    if (currentVisit === null || busy || !currentVisit.capabilities.canCancel) return;
+    const reason = terminalReason.value.trim();
+    if (reason === '') {
+      terminalBanner.showText('A reason is required to cancel.');
+      terminalReason.focus();
+      return;
+    }
+    terminalBanner.clear();
+    void handlers.onCancel(currentVisit.id, reason);
+  });
+
+  voidSubmit.addEventListener('click', () => {
+    if (currentVisit === null || busy || !currentVisit.capabilities.canVoid) return;
+    const reason = terminalReason.value.trim();
+    if (reason === '') {
+      terminalBanner.showText('A reason is required to void a visit.');
+      terminalReason.focus();
+      return;
+    }
+    terminalBanner.clear();
+    void handlers.onVoid(currentVisit.id, reason);
+  });
+
+  deleteSubmit.addEventListener('click', () => {
+    if (currentVisit === null || busy || !currentVisit.capabilities.canDelete) return;
+    // No reason: deleting is a correction, not a business event. The server
+    // still refuses outside the window and explains which condition failed.
+    terminalBanner.clear();
+    void handlers.onDelete(currentVisit.id);
   });
 
   reportForm.addEventListener('submit', (event) => {

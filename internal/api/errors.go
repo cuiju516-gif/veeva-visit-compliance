@@ -96,6 +96,9 @@ func (s *Server) handleError(w http.ResponseWriter, r *http.Request, err error) 
 	case errors.Is(err, store.ErrInvalidState):
 		s.fail(w, http.StatusConflict, CodeInvalidState, err.Error(), nil)
 
+	case errors.Is(err, store.ErrReasonRequired):
+		s.fail(w, http.StatusBadRequest, CodeValidation, err.Error(), map[string]string{"field": "reason"})
+
 	case errors.Is(err, store.ErrAlreadyCheckedIn):
 		s.fail(w, http.StatusConflict, CodeConflict,
 			"this rep is already checked in on another visit; check out of it first", nil)

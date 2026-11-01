@@ -158,6 +158,22 @@ export function submitReport(id: string, report: ReportInput): Promise<Visit> {
   return jsonRequest<Visit>(`/api/visits/${encodeURIComponent(id)}/report`, 'PUT', report);
 }
 
+export function cancelVisit(id: string, reason: string): Promise<Visit> {
+  return jsonRequest<Visit>(`/api/visits/${encodeURIComponent(id)}/cancel`, 'POST', { reason });
+}
+
+export function voidVisit(id: string, reason: string): Promise<Visit> {
+  return jsonRequest<Visit>(`/api/visits/${encodeURIComponent(id)}/void`, 'POST', { reason });
+}
+
+/**
+ * Deletes are logical: the row stays and the visit leaves every denominator.
+ * 204 carries no body, so the caller reloads the list rather than the visit.
+ */
+export function deleteVisit(id: string): Promise<void> {
+  return request<void>(`/api/visits/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
 export function getDashboard(months = 6): Promise<Dashboard> {
   return request<Dashboard>(`/api/dashboard/monthly?months=${months}`);
 }

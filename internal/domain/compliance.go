@@ -161,3 +161,31 @@ func formatDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%dm%02ds", secs/60, secs%60)
 }
+
+// EvaluateCheckinPoint runs the location rule against the check-in point only.
+//
+// Used when a visit is voided: there is no check-out, so the stay duration does
+// not exist and R1 cannot be evaluated. R2 still can, and it must — a voided
+// visit leaves the "completed" counter, but it must not leave its abnormality
+// behind (docs/需求说明.md §3.2 迁移 6 的"补判").
+func EvaluateCheckinPoint(checkin, base Coordinates, th Thresholds) ([]Flag, error) {
+	if err := th.Validate(); err != nil {
+		return nil, err
+	}
+	if !checkin.Valid() {
+		return nil, fmt.Errorf("check-in coordinates out of range: %v,%v", checkin.Lat, checkin.Lng)
+	}
+	if !base.Valid() {
+		return nil, fmt.Errorf("hospital coordinates out of range: %v,%v", base.Lat, base.Lng)
+	}
+
+	distance := HaversineMeters(checkin, base)
+	if !exceedsLimit(distance, th.MaxDistanceMeters) {
+		return nil, nil
+	}
+	return []Flag{{
+		Code: RuleLocationDeviation,
+		Detail: fmt.Sprintf("check-in was %.0f m from the hospital, limit is %.0f m",
+			distance, th.MaxDistanceMeters),
+	}}, nil
+}

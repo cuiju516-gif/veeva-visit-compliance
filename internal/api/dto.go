@@ -33,6 +33,9 @@ type capabilitiesDTO struct {
 	CanCheckIn  bool `json:"canCheckIn"`
 	CanCheckOut bool `json:"canCheckOut"`
 	CanReport   bool `json:"canReport"`
+	CanCancel   bool `json:"canCancel"`
+	CanVoid     bool `json:"canVoid"`
+	CanDelete   bool `json:"canDelete"`
 }
 
 type visitDTO struct {
@@ -61,6 +64,16 @@ type visitDTO struct {
 
 	Abnormal bool      `json:"abnormal"`
 	Flags    []flagDTO `json:"flags"`
+
+	// Terminal evidence. Exactly one group is populated, matching Status — the
+	// same pairing the database enforces in chk_visit_state_evidence.
+	CancelReason string     `json:"cancelReason,omitempty"`
+	CancelledAt  *time.Time `json:"cancelledAt,omitempty"`
+	VoidReason   string     `json:"voidReason,omitempty"`
+	VoidCause    string     `json:"voidCause,omitempty"`
+	VoidedAt     *time.Time `json:"voidedAt,omitempty"`
+	DeletedAt    *time.Time `json:"deletedAt,omitempty"`
+	ReportedAt   *time.Time `json:"reportedAt,omitempty"`
 
 	TalkingPoints        string        `json:"talkingPoints"`
 	HCPFeedback          string        `json:"hcpFeedback"`
@@ -92,6 +105,13 @@ func toVisitDTO(rec store.Record) visitDTO {
 		BaseLng:              rec.HospitalBase.Lng,
 		PlannedAt:            v.PlannedAt,
 		Abnormal:             domain.IsAbnormal(v.Flags),
+		CancelReason:         v.CancelReason,
+		CancelledAt:          v.CancelledAt,
+		VoidReason:           v.VoidReason,
+		VoidCause:            v.VoidCause,
+		VoidedAt:             v.VoidedAt,
+		DeletedAt:            v.DeletedAt,
+		ReportedAt:           v.ReportedAt,
 		TalkingPoints:        v.TalkingPoints,
 		HCPFeedback:          v.HCPFeedback,
 		MaterialsDistributed: v.MaterialsDistributed,
@@ -99,6 +119,9 @@ func toVisitDTO(rec store.Record) visitDTO {
 			CanCheckIn:  domain.CanCheckIn(v.Status),
 			CanCheckOut: domain.CanCheckOut(v.Status),
 			CanReport:   domain.CanReport(v.Status),
+			CanCancel:   domain.CanCancel(v.Status),
+			CanVoid:     domain.CanVoid(v.Status),
+			CanDelete:   domain.CanDelete(v.Status),
 		},
 		Version:   v.Version,
 		CreatedAt: v.CreatedAt,

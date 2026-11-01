@@ -1,7 +1,14 @@
 // Wire types mirroring the Go API's DTOs. Nothing here is computed by the
 // client: duration, flags and abnormal are always server-derived values.
 
-export type VisitStatus = 'PLANNED' | 'CHECKED_IN' | 'CHECKED_OUT' | 'REPORTED';
+export type VisitStatus =
+  | 'PLANNED'
+  | 'CHECKED_IN'
+  | 'CHECKED_OUT'
+  | 'REPORTED'
+  | 'CANCELLED'
+  | 'VOIDED'
+  | 'DELETED';
 
 export type FlagCode = 'DURATION_TOO_SHORT' | 'LOCATION_DEVIATION';
 
@@ -54,6 +61,9 @@ export interface Capabilities {
   canCheckIn: boolean;
   canCheckOut: boolean;
   canReport: boolean;
+  canCancel: boolean;
+  canVoid: boolean;
+  canDelete: boolean;
 }
 
 export interface Visit {
@@ -75,6 +85,14 @@ export interface Visit {
   durationSeconds?: number;
   abnormal: boolean;
   flags: VisitFlag[];
+  // Terminal evidence. Exactly one group is present, matching `status`.
+  cancelReason?: string;
+  cancelledAt?: string;
+  voidReason?: string;
+  voidCause?: 'MANUAL' | 'TIMEOUT';
+  voidedAt?: string;
+  deletedAt?: string;
+  reportedAt?: string;
   talkingPoints: string;
   hcpFeedback: string;
   materialsDistributed: boolean;

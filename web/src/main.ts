@@ -1,13 +1,16 @@
 import {
+  cancelVisit,
   checkIn,
   checkOut,
   createVisit,
+  deleteVisit,
   getCatalog,
   getDashboard,
   getVisit,
   listVisits,
   submitReport,
   toApiError,
+  voidVisit,
 } from './api';
 import type { ApiError, CreateVisitInput, Position, ReportInput } from './api';
 import { must } from './dom';
@@ -19,7 +22,7 @@ import { mountDetailView } from './views/detail';
 import { mountListView } from './views/list';
 import { mountPlanView } from './views/plan';
 
-type MutationKey = 'checkin' | 'checkout' | 'report';
+type MutationKey = 'checkin' | 'checkout' | 'report' | 'terminal';
 
 const store = createStore();
 
@@ -38,6 +41,11 @@ const detailView = mountDetailView(detailHost, {
   onCheckIn: handleCheckIn,
   onCheckOut: handleCheckOut,
   onSubmitReport: handleSubmitReport,
+  onCancel: (visitId: string, reason: string) =>
+    runVisitMutation('terminal', visitId, () => cancelVisit(visitId, reason)),
+  onVoid: (visitId: string, reason: string) =>
+    runVisitMutation('terminal', visitId, () => voidVisit(visitId, reason)),
+  onDelete: (visitId: string) => runDelete(visitId),
 });
 const dashboardView = mountDashboardView(dashboardHost, {
   onRefresh: () => {
@@ -266,6 +274,38 @@ function handleCheckOut(visitId: string, position: Position): Promise<void> {
 
 function handleSubmitReport(visitId: string, report: ReportInput): Promise<void> {
   return runVisitMutation('report', visitId, () => submitReport(visitId, report));
+}
+
+/**
+ * Deleting returns 204 with no body, and the row leaves every list — so the
+ * selected visit has to be cleared rather than reloaded (a reload would 404).
+ */
+async function runDelete(visitId: string): Promise<void> {
+  if (store.getState().loading.mutation) return;
+  store.update((state) => ({
+    ...state,
+    loading: { ...state.loading, mutation: true },
+    errors: withFormError(state.errors, 'terminal', null),
+  }));
+
+  try {
+    await deleteVisit(visitId);
+  } catch (error) {
+    const apiError = toApiError(error);
+    store.update((state) => ({
+      ...state,
+      errors: withFormError(state.errors, 'terminal', apiError),
+      loading: { ...state.loading, mutation: false },
+    }));
+    return;
+  }
+
+  store.update((state) => ({ ...state, selected: null }));
+  await Promise.all([loadVisits(), loadDashboard()]);
+  store.update((state) => ({
+    ...state,
+    loading: { ...state.loading, mutation: false },
+  }));
 }
 
 async function handleCreate(input: CreateVisitInput): Promise<boolean> {

@@ -1,7 +1,7 @@
 import type { ApiError } from './api';
 import type { Catalog, Dashboard, Visit, VisitStatus } from './types';
 
-type FormKey = 'plan' | 'checkin' | 'checkout' | 'report';
+type FormKey = 'plan' | 'checkin' | 'checkout' | 'report' | 'terminal';
 
 type ErrorScope =
   | 'catalog'
@@ -64,6 +64,7 @@ function createInitialState(): AppState {
       checkin: null,
       checkout: null,
       report: null,
+      terminal: null,
     },
   };
 }

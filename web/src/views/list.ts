@@ -31,6 +31,9 @@ const TEMPLATE = `
           <option value="CHECKED_IN">Checked in</option>
           <option value="CHECKED_OUT">Checked out</option>
           <option value="REPORTED">Reported</option>
+          <option value="CANCELLED">Cancelled</option>
+          <option value="VOIDED">Voided</option>
+          <option value="DELETED">Deleted</option>
         </select>
       </div>
       <div class="field">

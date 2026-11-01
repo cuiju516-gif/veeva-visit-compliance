@@ -64,7 +64,17 @@ State machine — transitions that are not listed return `409 invalid_state`:
 
 ```
 PLANNED ──checkin──▶ CHECKED_IN ──checkout──▶ CHECKED_OUT ──report──▶ REPORTED
+   │                   │
+   ├─cancel(reason)─▶ CANCELLED      ├─void(reason)─▶ VOIDED
+   └─delete────────▶ DELETED         └─timeout──────▶ VOIDED
 ```
+
+Seven states, three of them terminal. `delete` is a logical delete (the row stays, the visit leaves
+every count) and only works briefly after planning; outside that window the rep must cancel, which
+keeps a reason and a counter.
+
+A `VOIDED` visit keeps its check-in and never has a check-out, so it has no duration and rule R1
+cannot be evaluated — but rule R2 is **re-run** at void time, so a voided visit stays abnormal.
 
 Abnormality flags are orthogonal to the state: a `REPORTED` visit may still carry flags.
 
@@ -90,6 +100,9 @@ never out) is reported as *incomplete* rather than *compliant*.
 | `POST` | `/api/visits/{id}/checkin` | `{lat,lng}` → state `CHECKED_IN` |
 | `POST` | `/api/visits/{id}/checkout` | `{lat,lng}` → duration + flags |
 | `PUT` | `/api/visits/{id}/report` | Call report, optional material list |
+| `POST` | `/api/visits/{id}/cancel` | `{reason}` → `CANCELLED` (reason required) |
+| `POST` | `/api/visits/{id}/void` | `{reason}` → `VOIDED`; re-runs the location rule |
+| `DELETE` | `/api/visits/{id}` | Logical delete → `204`; only inside the planning window |
 | `GET` | `/api/visits/{id}` | Full visit incl. flags |
 | `GET` | `/api/visits` | List with filters |
 | `GET` | `/api/dashboard/monthly` | Visits per product per month + abnormal share |

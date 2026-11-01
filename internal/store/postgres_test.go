@@ -336,3 +336,114 @@ func TestBothPointsDeviatingProducesThreeFlags(t *testing.T) {
 		t.Fatalf("expected 2 location flags (one per point), got %d", location)
 	}
 }
+
+// TestTerminalLifecycle exercises the three terminal transitions against the
+// real schema. The CHECK constraint in 0003 is the thing being proven: the Go
+// tests use a fake repository, which cannot show that a CANCELLED row without a
+// reason is actually rejected by the database.
+func TestTerminalLifecycle(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	cat, err := repo.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	hcp := cat.HCPs[0]
+
+	newPlanned := func(t *testing.T, plannedAt time.Time) Record {
+		t.Helper()
+		mr := pickMR(t, repo, cat)
+		rec, err := repo.Create(ctx, CreateParams{
+			MRID: mr.ID, HCPID: hcp.ID, ProductID: cat.Products[0].ID,
+			PlannedAt: plannedAt,
+		})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = repo.pool.Exec(context.Background(), "DELETE FROM visit WHERE id = $1", rec.Visit.ID)
+		})
+		return rec
+	}
+
+	t.Run("cancel requires a reason", func(t *testing.T) {
+		rec := newPlanned(t, time.Now().Add(48*time.Hour))
+		if _, err := repo.Cancel(ctx, rec.Visit.ID, "  ", time.Now()); !errors.Is(err, ErrReasonRequired) {
+			t.Fatalf("cancel with blank reason: err = %v, want ErrReasonRequired", err)
+		}
+		got, err := repo.Cancel(ctx, rec.Visit.ID, "doctor rescheduled", time.Now())
+		if err != nil {
+			t.Fatalf("cancel: %v", err)
+		}
+		if got.Visit.Status != domain.StatusCancelled || got.Visit.CancelReason != "doctor rescheduled" {
+			t.Fatalf("after cancel: status=%s reason=%q", got.Visit.Status, got.Visit.CancelReason)
+		}
+		if got.Visit.CancelledAt == nil {
+			t.Fatalf("cancelled_at was not written")
+		}
+		// Cancelling twice is a state conflict, not a silent no-op.
+		if _, err := repo.Cancel(ctx, rec.Visit.ID, "again", time.Now()); !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("second cancel: err = %v, want ErrInvalidState", err)
+		}
+	})
+
+	t.Run("void keeps the check-in and backfills the location rule", func(t *testing.T) {
+		rec := newPlanned(t, time.Now().Add(48*time.Hour))
+		// ~2.2 km east of the hospital.
+		pos := domain.Coordinates{Lat: hcp.BaseLat, Lng: hcp.BaseLng + 0.02}
+		if _, err := repo.CheckIn(ctx, rec.Visit.ID, time.Now().UTC(), pos); err != nil {
+			t.Fatalf("check-in: %v", err)
+		}
+		got, err := repo.Void(ctx, rec.Visit.ID, "wrong building", time.Now(), domain.DefaultThresholds())
+		if err != nil {
+			t.Fatalf("void: %v", err)
+		}
+		if got.Visit.Status != domain.StatusVoided {
+			t.Fatalf("status = %s, want VOIDED", got.Visit.Status)
+		}
+		if got.Visit.VoidCause != domain.VoidCauseManual {
+			t.Fatalf("cause = %q, want MANUAL", got.Visit.VoidCause)
+		}
+		if got.Visit.CheckinAt == nil || got.Visit.CheckoutAt != nil {
+			t.Fatalf("voided visit must keep check-in and have no check-out")
+		}
+		if len(got.Visit.Flags) == 0 {
+			t.Fatalf("voiding hid the location deviation; flags were not backfilled")
+		}
+	})
+
+	t.Run("delete window", func(t *testing.T) {
+		rec := newPlanned(t, time.Now().Add(48*time.Hour))
+		// Moving created_at back is the only way to age a row inside a test.
+		if _, err := repo.pool.Exec(ctx,
+			"UPDATE visit SET created_at = now() - interval '3 hours' WHERE id = $1", rec.Visit.ID); err != nil {
+			t.Fatalf("age the row: %v", err)
+		}
+		var closed *DeleteWindowError
+		if _, err := repo.Delete(ctx, rec.Visit.ID, time.Now()); !errors.As(err, &closed) {
+			t.Fatalf("delete outside the window: err = %v, want DeleteWindowError", err)
+		} else if closed.Reason == "" {
+			t.Fatalf("DeleteWindowError must say which condition failed")
+		}
+	})
+
+	t.Run("delete inside the window", func(t *testing.T) {
+		rec := newPlanned(t, time.Now().Add(48*time.Hour))
+		got, err := repo.Delete(ctx, rec.Visit.ID, time.Now())
+		if err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		if got.Visit.Status != domain.StatusDeleted || got.Visit.DeletedAt == nil {
+			t.Fatalf("after delete: status=%s deletedAt=%v", got.Visit.Status, got.Visit.DeletedAt)
+		}
+		// The row must still exist: a logical delete that removes the row would
+		// let the "planned" denominator shrink silently.
+		var n int
+		if err := repo.pool.QueryRow(ctx, "SELECT count(*) FROM visit WHERE id = $1", rec.Visit.ID).Scan(&n); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("row was physically removed")
+		}
+	})
+}

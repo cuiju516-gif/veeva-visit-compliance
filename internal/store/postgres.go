@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -161,6 +162,8 @@ const visitSelect = `
 	       v.checkout_at, v.checkout_lat, v.checkout_lng,
 	       v.duration_seconds,
 	       COALESCE(v.talking_points, ''), COALESCE(v.hcp_feedback, ''), v.materials_distributed,
+	       COALESCE(v.cancel_reason, ''), v.cancelled_at, COALESCE(v.void_reason, ''),
+	       COALESCE(v.void_cause, ''), v.voided_at, v.deleted_at, v.reported_at,
 	       v.created_at, v.updated_at, v.version
 	FROM visit v
 	JOIN mr m      ON m.id = v.mr_id
@@ -193,6 +196,8 @@ func scanVisit(row pgx.Row) (Record, error) {
 		&checkout.at, &checkout.lat, &checkout.lng,
 		&dur,
 		&v.TalkingPoints, &v.HCPFeedback, &v.MaterialsDistributed,
+		&v.CancelReason, &v.CancelledAt, &v.VoidReason,
+		&v.VoidCause, &v.VoidedAt, &v.DeletedAt, &v.ReportedAt,
 		&v.CreatedAt, &v.UpdatedAt, &version,
 	)
 	if err != nil {
@@ -523,6 +528,7 @@ func (p *Postgres) SubmitReport(ctx context.Context, id string, in ReportParams)
 		UPDATE visit
 		   SET status = 'REPORTED',
 		       talking_points = $2, hcp_feedback = $3, materials_distributed = $4,
+		       reported_at = now(),
 		       version = version + 1, updated_at = now()
 		 WHERE id = $1 AND status = 'CHECKED_OUT'`,
 		id, in.TalkingPoints, in.HCPFeedback, in.MaterialsDistributed)
@@ -632,4 +638,123 @@ func monthRange(first time.Time, months int) []string {
 		out = append(out, first.AddDate(0, i, 0).Format("2006-01"))
 	}
 	return out
+}
+
+// Cancel ends a plan that never happened.
+//
+// The reason is required at the API layer; it is re-checked here because the
+// store is the last place that can refuse to write a CANCELLED row with no
+// explanation, and chk_visit_state_evidence would reject it anyway — with a
+// message about constraints rather than about the missing reason.
+func (p *Postgres) Cancel(ctx context.Context, id, reason string, at time.Time) (Record, error) {
+	if strings.TrimSpace(reason) == "" {
+		return Record{}, ErrReasonRequired
+	}
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE visit
+		   SET status = 'CANCELLED', cancel_reason = $2, cancelled_at = $3,
+		       version = version + 1, updated_at = now()
+		 WHERE id = $1 AND status = 'PLANNED'`,
+		id, reason, at)
+	if err != nil {
+		return Record{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return Record{}, p.classifyMiss(ctx, id, "cancel")
+	}
+	return p.Get(ctx, id)
+}
+
+// Void marks an attended visit as not counting.
+//
+// It is only legal before check-out: once the verdict exists, letting the rep
+// withdraw the visit would make the verdict advisory (docs/契约.md §3.4).
+//
+// The location rule is re-run against the check-in point inside the same
+// transaction. A voided visit can leave the "completed" count, but it must not
+// take its abnormality with it — that is the whole anti-cheat design.
+func (p *Postgres) Void(ctx context.Context, id, reason string, at time.Time, th domain.Thresholds) (Record, error) {
+	if strings.TrimSpace(reason) == "" {
+		return Record{}, ErrReasonRequired
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return Record{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rec, err := scanVisit(tx.QueryRow(ctx, visitSelect+" WHERE v.id = $1 FOR UPDATE OF v", id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Record{}, ErrNotFound
+	}
+	if err != nil {
+		return Record{}, err
+	}
+	if rec.Visit.Status != domain.StatusCheckedIn || rec.Visit.CheckinPos == nil {
+		return Record{}, &StateError{Status: rec.Visit.Status, Action: "void"}
+	}
+
+	flags, err := domain.EvaluateCheckinPoint(*rec.Visit.CheckinPos, rec.HospitalBase, th)
+	if err != nil {
+		return Record{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE visit
+		   SET status = 'VOIDED', void_reason = $2, void_cause = $3, voided_at = $4,
+		       version = version + 1, updated_at = now()
+		 WHERE id = $1`,
+		id, reason, domain.VoidCauseManual, at); err != nil {
+		return Record{}, err
+	}
+
+	// Replace, never append: re-running a void must not accumulate evidence.
+	if _, err := tx.Exec(ctx, "DELETE FROM visit_flag WHERE visit_id = $1", id); err != nil {
+		return Record{}, err
+	}
+	for _, f := range flags {
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO visit_flag (visit_id, code, detail) VALUES ($1, $2, $3)",
+			id, string(f.Code), f.Detail); err != nil {
+			return Record{}, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Record{}, err
+	}
+	p.log.Info("visit voided", "visit", id, "backfilled_flags", len(flags))
+	return p.Get(ctx, id)
+}
+
+// Delete is a logical delete: the row stays, the visit leaves every denominator.
+//
+// The window is checked in Go rather than in the UPDATE's WHERE clause so that a
+// refused delete can explain *which* of the two conditions failed — "created too
+// long ago" and "starts too soon" call for different next actions.
+func (p *Postgres) Delete(ctx context.Context, id string, now time.Time) (Record, error) {
+	rec, err := p.Get(ctx, id)
+	if err != nil {
+		return Record{}, err
+	}
+	if rec.Visit.Status != domain.StatusPlanned {
+		return Record{}, &StateError{Status: rec.Visit.Status, Action: "delete"}
+	}
+	if !domain.DeleteWindowOpen(rec.Visit.CreatedAt, rec.Visit.PlannedAt, now) {
+		return Record{}, &DeleteWindowError{Reason: domain.DeleteWindowReport(rec.Visit.CreatedAt, rec.Visit.PlannedAt, now)}
+	}
+
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE visit
+		   SET status = 'DELETED', deleted_at = $2,
+		       version = version + 1, updated_at = now()
+		 WHERE id = $1 AND status = 'PLANNED'`,
+		id, now)
+	if err != nil {
+		return Record{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return Record{}, p.classifyMiss(ctx, id, "delete")
+	}
+	return p.Get(ctx, id)
 }

@@ -624,3 +624,240 @@ func TestZeroSecondVisitReportsZeroDuration(t *testing.T) {
 		t.Fatalf("durationSeconds = %v, want a present 0", got.DurationSeconds)
 	}
 }
+
+func (f *fakeRepo) Cancel(ctx context.Context, id, reason string, at time.Time) (store.Record, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.records[id]
+	if !ok {
+		return store.Record{}, store.ErrNotFound
+	}
+	if strings.TrimSpace(reason) == "" {
+		return store.Record{}, store.ErrReasonRequired
+	}
+	if rec.Visit.Status != domain.StatusPlanned {
+		return store.Record{}, &store.StateError{Status: rec.Visit.Status, Action: "cancel"}
+	}
+	rec.Visit.Status = domain.StatusCancelled
+	rec.Visit.CancelReason = reason
+	rec.Visit.CancelledAt = &at
+	rec.Visit.Version++
+	return *rec, nil
+}
+
+func (f *fakeRepo) Void(ctx context.Context, id, reason string, at time.Time, th domain.Thresholds) (store.Record, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.records[id]
+	if !ok {
+		return store.Record{}, store.ErrNotFound
+	}
+	if strings.TrimSpace(reason) == "" {
+		return store.Record{}, store.ErrReasonRequired
+	}
+	if rec.Visit.Status != domain.StatusCheckedIn || rec.Visit.CheckinPos == nil {
+		return store.Record{}, &store.StateError{Status: rec.Visit.Status, Action: "void"}
+	}
+	flags, err := domain.EvaluateCheckinPoint(*rec.Visit.CheckinPos, rec.HospitalBase, th)
+	if err != nil {
+		return store.Record{}, err
+	}
+	rec.Visit.Status = domain.StatusVoided
+	rec.Visit.VoidReason = reason
+	rec.Visit.VoidCause = domain.VoidCauseManual
+	rec.Visit.VoidedAt = &at
+	rec.Visit.Flags = flags
+	rec.Visit.Version++
+	return *rec, nil
+}
+
+func (f *fakeRepo) Delete(ctx context.Context, id string, now time.Time) (store.Record, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.records[id]
+	if !ok {
+		return store.Record{}, store.ErrNotFound
+	}
+	if rec.Visit.Status != domain.StatusPlanned {
+		return store.Record{}, &store.StateError{Status: rec.Visit.Status, Action: "delete"}
+	}
+	if !domain.DeleteWindowOpen(rec.Visit.CreatedAt, rec.Visit.PlannedAt, now) {
+		return store.Record{}, &store.DeleteWindowError{
+			Reason: domain.DeleteWindowReport(rec.Visit.CreatedAt, rec.Visit.PlannedAt, now),
+		}
+	}
+	rec.Visit.Status = domain.StatusDeleted
+	rec.Visit.DeletedAt = &now
+	rec.Visit.Version++
+	return *rec, nil
+}
+
+// --- terminal transitions -------------------------------------------------
+
+func TestCancelRequiresReason(t *testing.T) {
+	h := newHarness(t)
+
+	t.Run("missing reason", func(t *testing.T) {
+		v := h.createPlanned()
+		resp, raw := h.do(http.MethodPost, "/api/visits/"+v.ID+"/cancel", map[string]any{})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body %s", resp.StatusCode, raw)
+		}
+		e := h.decodeError(raw)
+		if e.Code != CodeValidation || e.Details["field"] != "reason" {
+			t.Fatalf("error = %+v, want validation_failed on reason", e)
+		}
+	})
+
+	t.Run("blank reason", func(t *testing.T) {
+		v := h.createPlanned()
+		resp, raw := h.do(http.MethodPost, "/api/visits/"+v.ID+"/cancel", map[string]any{"reason": "   "})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body %s", resp.StatusCode, raw)
+		}
+	})
+
+	t.Run("accepted", func(t *testing.T) {
+		v := h.createPlanned()
+		resp, raw := h.do(http.MethodPost, "/api/visits/"+v.ID+"/cancel", map[string]any{"reason": "doctor on leave"})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body %s", resp.StatusCode, raw)
+		}
+		got := h.decodeVisit(raw)
+		if got.Status != string(domain.StatusCancelled) {
+			t.Fatalf("status = %q, want CANCELLED", got.Status)
+		}
+		if got.CancelReason != "doctor on leave" || got.CancelledAt == nil {
+			t.Fatalf("reason/at not recorded: %+v", got)
+		}
+		if got.Capabilities.CanCancel || got.Capabilities.CanCheckIn {
+			t.Fatalf("cancelled visit still offers actions: %+v", got.Capabilities)
+		}
+	})
+
+	t.Run("after check-in is a conflict", func(t *testing.T) {
+		v := h.createPlanned()
+		h.do(http.MethodPost, "/api/visits/"+v.ID+"/checkin", map[string]any{"lat": 31.2119, "lng": 121.4661})
+		resp, raw := h.do(http.MethodPost, "/api/visits/"+v.ID+"/cancel", map[string]any{"reason": "changed my mind"})
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status = %d, want 409; body %s", resp.StatusCode, raw)
+		}
+		if e := h.decodeError(raw); e.Code != CodeInvalidState {
+			t.Fatalf("code = %q, want invalid_state", e.Code)
+		}
+	})
+}
+
+func TestVoidOnlyFromCheckedIn(t *testing.T) {
+	h := newHarness(t)
+
+	t.Run("planned cannot be voided", func(t *testing.T) {
+		v := h.createPlanned()
+		resp, raw := h.do(http.MethodPost, "/api/visits/"+v.ID+"/void", map[string]any{"reason": "wrong site"})
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status = %d, want 409; body %s", resp.StatusCode, raw)
+		}
+	})
+
+	t.Run("checked in can be voided", func(t *testing.T) {
+		v := h.createPlanned()
+		h.do(http.MethodPost, "/api/visits/"+v.ID+"/checkin", map[string]any{"lat": 31.2119, "lng": 121.4661})
+		resp, raw := h.do(http.MethodPost, "/api/visits/"+v.ID+"/void", map[string]any{"reason": "left early"})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body %s", resp.StatusCode, raw)
+		}
+		got := h.decodeVisit(raw)
+		if got.Status != string(domain.StatusVoided) {
+			t.Fatalf("status = %q, want VOIDED", got.Status)
+		}
+		if got.VoidCause != domain.VoidCauseManual || got.VoidReason != "left early" {
+			t.Fatalf("void evidence not recorded: %+v", got)
+		}
+		if got.Checkin == nil || got.Checkout != nil {
+			t.Fatalf("voided visit must keep check-in and have no check-out: %+v", got)
+		}
+		if got.DurationSeconds != nil {
+			t.Fatalf("voided visit must not have a duration, got %d", *got.DurationSeconds)
+		}
+	})
+
+	t.Run("after check-out the window is closed", func(t *testing.T) {
+		v := h.createPlanned()
+		h.do(http.MethodPost, "/api/visits/"+v.ID+"/checkin", map[string]any{"lat": 31.2119, "lng": 121.4661})
+		h.do(http.MethodPost, "/api/visits/"+v.ID+"/checkout", map[string]any{"lat": 31.2119, "lng": 121.4661})
+		resp, raw := h.do(http.MethodPost, "/api/visits/"+v.ID+"/void", map[string]any{"reason": "it was flagged"})
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status = %d, want 409; body %s", resp.StatusCode, raw)
+		}
+	})
+}
+
+func TestVoidBackfillsLocationFlag(t *testing.T) {
+	h := newHarness(t)
+
+	v := h.createPlanned()
+	// ~2.2 km east of the hospital: far outside the 500 m rule.
+	h.do(http.MethodPost, "/api/visits/"+v.ID+"/checkin", map[string]any{"lat": 31.2119, "lng": 121.4861})
+
+	resp, raw := h.do(http.MethodPost, "/api/visits/"+v.ID+"/void", map[string]any{"reason": "wrong building"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", resp.StatusCode, raw)
+	}
+	got := h.decodeVisit(raw)
+	if !got.Abnormal || len(got.Flags) == 0 {
+		t.Fatalf("voiding hid the location deviation: abnormal=%v flags=%+v", got.Abnormal, got.Flags)
+	}
+	if got.Flags[0].Code != string(domain.RuleLocationDeviation) {
+		t.Fatalf("flag code = %q, want LOCATION_DEVIATION", got.Flags[0].Code)
+	}
+}
+
+func TestDeleteWindowEnforced(t *testing.T) {
+	h := newHarness(t)
+
+	t.Run("inside the window", func(t *testing.T) {
+		v := h.createPlanned() // created now, starts in 24h
+		resp, raw := h.do(http.MethodDelete, "/api/visits/"+v.ID, nil)
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204; body %s", resp.StatusCode, raw)
+		}
+		after := h.repo.records[v.ID]
+		if after.Visit.Status != domain.StatusDeleted || after.Visit.DeletedAt == nil {
+			t.Fatalf("visit not marked deleted: %+v", after.Visit)
+		}
+	})
+
+	t.Run("plan starts too soon", func(t *testing.T) {
+		v := h.createPlanned()
+		h.repo.records[v.ID].Visit.PlannedAt = time.Now().Add(30 * time.Minute)
+		resp, raw := h.do(http.MethodDelete, "/api/visits/"+v.ID, nil)
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status = %d, want 409; body %s", resp.StatusCode, raw)
+		}
+		e := h.decodeError(raw)
+		if e.Code != CodeInvalidState {
+			t.Fatalf("code = %q, want invalid_state", e.Code)
+		}
+		if !strings.Contains(e.Message, "cancel instead") {
+			t.Fatalf("message should point at cancel, got %q", e.Message)
+		}
+	})
+
+	t.Run("created too long ago", func(t *testing.T) {
+		v := h.createPlanned()
+		h.repo.records[v.ID].Visit.CreatedAt = time.Now().Add(-3 * time.Hour)
+		resp, raw := h.do(http.MethodDelete, "/api/visits/"+v.ID, nil)
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status = %d, want 409; body %s", resp.StatusCode, raw)
+		}
+	})
+
+	t.Run("checked-in visit cannot be deleted", func(t *testing.T) {
+		v := h.createPlanned()
+		h.do(http.MethodPost, "/api/visits/"+v.ID+"/checkin", map[string]any{"lat": 31.2119, "lng": 121.4661})
+		resp, raw := h.do(http.MethodDelete, "/api/visits/"+v.ID, nil)
+		if resp.StatusCode != http.StatusConflict {
+			t.Fatalf("status = %d, want 409; body %s", resp.StatusCode, raw)
+		}
+	})
+}
