@@ -4,6 +4,7 @@ import type {
   Dashboard,
   ErrorDetails,
   Material,
+  RulesResponse,
   Visit,
   VisitListResponse,
   VisitStatus,
@@ -190,6 +191,22 @@ export function voidVisit(id: string, reason: string): Promise<Visit> {
  */
 export function deleteVisit(id: string): Promise<void> {
   return request<void>(`/api/visits/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export interface RulesInput {
+  minDurationSeconds: number;
+  maxDistanceMeters: number;
+  timeoutHours: number;
+  reportTimeoutHours: number;
+  note: string;
+}
+
+export function getRules(): Promise<RulesResponse> {
+  return request<RulesResponse>('/api/admin/rules');
+}
+
+export function putRules(input: RulesInput): Promise<RulesResponse> {
+  return jsonRequest<RulesResponse>('/api/admin/rules', 'PUT', input);
 }
 
 export function getDashboard(months = 6): Promise<Dashboard> {

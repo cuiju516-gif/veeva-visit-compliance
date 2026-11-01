@@ -70,6 +70,10 @@ type visitDTO struct {
 	Evaluation  *domain.Evaluation `json:"evaluation,omitempty"`
 	RuleVersion string             `json:"ruleVersion,omitempty"`
 
+	// ReportOverdue is true when the visit was checked out long ago and the call
+	// report still has not been filed. Derived, never stored.
+	ReportOverdue bool `json:"reportOverdue"`
+
 	// Terminal evidence. Exactly one group is populated, matching Status — the
 	// same pairing the database enforces in chk_visit_state_evidence.
 	CancelReason string     `json:"cancelReason,omitempty"`
@@ -112,6 +116,7 @@ func toVisitDTO(rec store.Record) visitDTO {
 		Abnormal:             domain.IsAbnormal(v.Flags),
 		Evaluation:           v.Evaluation,
 		RuleVersion:          v.RuleVersion,
+		ReportOverdue:        rec.ReportOverdue,
 		CancelReason:         v.CancelReason,
 		CancelledAt:          v.CancelledAt,
 		VoidReason:           v.VoidReason,

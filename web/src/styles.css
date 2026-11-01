@@ -1062,3 +1062,24 @@ body { padding-left: 92px; }
   .rail-list { flex-direction: row; }
   .rail-button { flex-direction: row; gap: 6px; padding: 6px 10px; }
 }
+
+/* ---------- 合规规则卡（仅管理员） ---------- */
+.rules-card .rules-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.rules-history { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: 13px; }
+.rules-history th, .rules-history td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border, #e4e7ec); }
+.rules-history th { color: #667085; font-weight: 600; }
+.badge-warn { background: #fef0c7; color: #b54708; }
+
+/* 三个终态的状态药丸：与列表里的语义色一致 */
+.pill-planned { background: #f2f4f7; color: #475467; }
+.pill-checked_in { background: #dbeafe; color: #1d4ed8; }
+.pill-checked_out { background: #fef0c7; color: #b54708; }
+.pill-reported { background: #dcfae6; color: #067647; }
+.pill-cancelled { background: #f2f4f7; color: #667085; }
+.pill-voided { background: #fee4e2; color: #b42318; }
+.pill-deleted { background: #f2f4f7; color: #98a2b3; text-decoration: line-through; }

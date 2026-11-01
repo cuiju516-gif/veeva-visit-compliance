@@ -52,6 +52,33 @@ export interface VisitFlag {
   detail: string;
 }
 
+export interface Evaluation {
+  durationSec: number | null;
+  distanceInM: number | null;
+  distanceOutM: number | null;
+  flags: VisitFlag[];
+  abnormal: boolean;
+  thresholds: { minDurationSec: number; maxDistanceM: number };
+  ruleVersion: string;
+  evaluatedAt: string;
+  source: string;
+}
+
+export interface RuleVersion {
+  version: string;
+  minDurationSeconds: number;
+  maxDistanceMeters: number;
+  timeoutHours: number;
+  reportTimeoutHours: number;
+  createdAt: string;
+  createdBy: string;
+  note: string;
+}
+
+export interface RulesResponse extends RuleVersion {
+  history?: RuleVersion[];
+}
+
 export interface Material {
   name: string;
   kind: MaterialKind;
@@ -85,6 +112,11 @@ export interface Visit {
   durationSeconds?: number;
   abnormal: boolean;
   flags: VisitFlag[];
+  /** True when the visit was checked out long ago and the report is still missing. */
+  reportOverdue: boolean;
+  /** The verdict plus the evidence that produced it; null until judged. */
+  evaluation?: Evaluation;
+  ruleVersion?: string;
   // Terminal evidence. Exactly one group is present, matching `status`.
   cancelReason?: string;
   cancelledAt?: string;

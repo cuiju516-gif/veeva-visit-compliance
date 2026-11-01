@@ -178,6 +178,13 @@ export function mountListView(host: HTMLElement, handlers: ListHandlers): ListVi
     } else {
       abnormal.append(el('span', 'cell-muted', '—'));
     }
+    // Independent of the compliance verdict: a visit can be compliant and still
+    // be missing its call report, and that is a different problem to chase.
+    if (visit.reportOverdue) {
+      const late = el('span', 'badge badge-warn', '记录缺失');
+      late.title = '签退后超过补记录时限仍未提交拜访记录';
+      abnormal.append(late);
+    }
 
     row.append(planned, hcp, hospital, product, status, abnormal);
     return row;

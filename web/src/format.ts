@@ -20,7 +20,7 @@ const STATUS_LABELS: Record<VisitStatus, string> = {
   CHECKED_OUT: '已签退',
   REPORTED: '已完成',
   CANCELLED: '已取消',
-  VOIDED: 'Voided',
+  VOIDED: '已作废',
   DELETED: '已删除',
 };
 

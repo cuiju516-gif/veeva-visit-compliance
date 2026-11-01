@@ -6,19 +6,22 @@ import {
   deleteVisit,
   getCatalog,
   getDashboard,
+  getRules,
   getVisit,
   listVisits,
+  putRules,
   setActor,
   submitReport,
   toApiError,
   voidVisit,
 } from './api';
-import type { ApiError, CreateVisitInput, Position, ReportInput } from './api';
+import type { ApiError, CreateVisitInput, Position, ReportInput, RulesInput } from './api';
 import { must } from './dom';
 import { createStore } from './state';
 import type { AppState, ErrorState, Filters } from './state';
 import type { Visit } from './types';
 import { mountDashboardView } from './views/dashboard';
+import { mountRulesView } from './views/rules';
 import { mountDetailView } from './views/detail';
 import { mountListView } from './views/list';
 import { mountPlanView } from './views/plan';
@@ -48,6 +51,9 @@ const detailView = mountDetailView(detailHost, {
     runVisitMutation('terminal', visitId, () => voidVisit(visitId, reason)),
   onDelete: (visitId: string) => runDelete(visitId),
 });
+const rulesHost = must<HTMLElement>(document, '#rules-root');
+const rulesView = mountRulesView(rulesHost, { onSave: handleSaveRules });
+
 const dashboardView = mountDashboardView(dashboardHost, {
   onRefresh: () => {
     void loadDashboard();
@@ -113,6 +119,56 @@ function renderIdentities(): void {
   actorNote.textContent = active === undefined ? '' : `${active.role} · ${active.label}`;
 }
 
+let rulesSeq = 0;
+
+async function loadRules(): Promise<void> {
+  const seq = ++rulesSeq;
+  try {
+    const response = await getRules();
+    if (seq !== rulesSeq) return;
+    const { history, ...current } = response;
+    store.update((state) => ({
+      ...state,
+      rules: current,
+      ruleHistory: history ?? [current],
+      errors: { ...state.errors, rules: null },
+    }));
+  } catch (error) {
+    if (seq !== rulesSeq) return;
+    // A rep asking for the rules gets 403; that is expected, not an error worth
+    // showing, so the card simply stays empty for them.
+    const apiError = toApiError(error);
+    if (apiError.status === 403) return;
+    store.update((state) => ({
+      ...state,
+      errors: { ...state.errors, rules: apiError },
+    }));
+  }
+}
+
+async function handleSaveRules(input: RulesInput): Promise<void> {
+  if (store.getState().loading.mutation) return;
+  store.update((state) => ({
+    ...state,
+    loading: { ...state.loading, mutation: true },
+    errors: { ...state.errors, rules: null },
+  }));
+  try {
+    await putRules(input);
+    await loadRules();
+  } catch (error) {
+    store.update((state) => ({
+      ...state,
+      errors: { ...state.errors, rules: toApiError(error) },
+    }));
+  } finally {
+    store.update((state) => ({
+      ...state,
+      loading: { ...state.loading, mutation: false },
+    }));
+  }
+}
+
 async function switchActor(key: string): Promise<void> {
   if (key === currentActor) return;
   currentActor = key;
@@ -121,13 +177,14 @@ async function switchActor(key: string): Promise<void> {
   renderIdentities();
   // The previous selection and every cached row belong to someone else.
   store.update((state) => ({ ...state, selected: null }));
-  await Promise.all([loadVisits(), loadDashboard()]);
+  await Promise.all([loadVisits(), loadDashboard(), loadRules()]);
 }
 
 function render(state: AppState): void {
   planView.update(state);
   listView.update(state);
   detailView.update(state);
+  rulesView.update(state);
   dashboardView.update(state);
 
   refreshButton.disabled = state.loading.mutation;
@@ -424,4 +481,4 @@ render(store.getState());
 
 renderIdentities();
 setActor(currentActor);
-void Promise.all([loadCatalog(), loadVisits(), loadDashboard()]);
+void Promise.all([loadCatalog(), loadVisits(), loadDashboard(), loadRules()]);

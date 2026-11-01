@@ -316,6 +316,9 @@ func (p *Postgres) Get(ctx context.Context, id string) (Record, error) {
 	if err := p.loadMaterials(ctx, recs); err != nil {
 		return Record{}, err
 	}
+	if err := p.markReportOverdue(ctx, recs); err != nil {
+		return Record{}, err
+	}
 	return recs[0], nil
 }
 
@@ -364,6 +367,9 @@ func (p *Postgres) List(ctx context.Context, lp ListParams) ([]Record, error) {
 		return nil, err
 	}
 	if err := p.loadMaterials(ctx, records); err != nil {
+		return nil, err
+	}
+	if err := p.markReportOverdue(ctx, records); err != nil {
 		return nil, err
 	}
 	return records, nil
@@ -1019,6 +1025,120 @@ func (p *Postgres) Converge(ctx context.Context, now time.Time) (ConvergeResult,
 			return out, err
 		}
 		out.Voided++
+	}
+	return out, nil
+}
+
+// markReportOverdue fills the derived "the report is late" flag.
+//
+// It is computed on read rather than stored, so it can never disagree with the
+// clock, and it costs one small query per page rather than one per row.
+func (p *Postgres) markReportOverdue(ctx context.Context, recs []Record) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	rules, err := p.CurrentRules(ctx)
+	if err != nil {
+		return err
+	}
+	cutoff := time.Now().Add(-time.Duration(rules.ReportTimeoutHours) * time.Hour)
+	for i := range recs {
+		v := &recs[i].Visit
+		if v.Status != domain.StatusCheckedOut || v.CheckoutAt == nil {
+			continue
+		}
+		recs[i].ReportOverdue = v.CheckoutAt.Before(cutoff)
+	}
+	return nil
+}
+
+// RuleHistory returns the most recent versions, newest first. It exists so the
+// administrator can see what changed and when, not just what is in force.
+func (p *Postgres) RuleHistory(ctx context.Context, limit int) ([]RuleVersion, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT version, min_duration_sec, max_distance_m, timeout_hours, report_timeout_hours,
+		       created_at, created_by, note
+		  FROM rule_version
+		 ORDER BY created_at DESC, version DESC
+		 LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []RuleVersion{}
+	for rows.Next() {
+		var r RuleVersion
+		if err := rows.Scan(&r.Version, &r.MinDurationSeconds, &r.MaxDistanceMeters,
+			&r.TimeoutHours, &r.ReportTimeoutHours, &r.CreatedAt, &r.CreatedBy, &r.Note); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SetRulesWithTimeouts is SetRules plus the two timeouts, which share the same
+// version. Keeping them in one call means a save can never bump the compliance
+// thresholds while silently leaving a stale timeout in force.
+func (p *Postgres) SetRulesWithTimeouts(
+	ctx context.Context, th domain.Thresholds, timeoutHours, reportTimeoutHours int, by, note string,
+) (RuleVersion, error) {
+	if err := th.Validate(); err != nil {
+		return RuleVersion{}, err
+	}
+	if timeoutHours <= 0 || reportTimeoutHours <= 0 {
+		return RuleVersion{}, fmt.Errorf("%w: timeouts must be positive", ErrReasonRequired)
+	}
+
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return RuleVersion{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x72756c65)); err != nil {
+		return RuleVersion{}, err
+	}
+
+	current, err := p.currentRulesTx(ctx, tx)
+	if err != nil {
+		return RuleVersion{}, err
+	}
+	if current.MinDurationSeconds == th.MinDurationSeconds &&
+		current.MaxDistanceMeters == th.MaxDistanceMeters &&
+		current.TimeoutHours == timeoutHours &&
+		current.ReportTimeoutHours == reportTimeoutHours {
+		if err := tx.Commit(ctx); err != nil {
+			return RuleVersion{}, err
+		}
+		return current, nil
+	}
+
+	var next string
+	if err := tx.QueryRow(ctx, `
+		SELECT 'v' || (COALESCE(MAX(NULLIF(regexp_replace(version, '\D', '', 'g'), '')::int), 0) + 1)
+		  FROM rule_version`).Scan(&next); err != nil {
+		return RuleVersion{}, err
+	}
+
+	var out RuleVersion
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO rule_version (version, min_duration_sec, max_distance_m, timeout_hours, report_timeout_hours, created_by, note)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING version, min_duration_sec, max_distance_m, timeout_hours, report_timeout_hours,
+		          created_at, created_by, note`,
+		next, th.MinDurationSeconds, th.MaxDistanceMeters, timeoutHours, reportTimeoutHours, by, note).
+		Scan(&out.Version, &out.MinDurationSeconds, &out.MaxDistanceMeters,
+			&out.TimeoutHours, &out.ReportTimeoutHours, &out.CreatedAt, &out.CreatedBy, &out.Note); err != nil {
+		return RuleVersion{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return RuleVersion{}, err
 	}
 	return out, nil
 }

@@ -39,6 +39,7 @@ func newFakeRepo() *fakeRepo {
 		records: map[string]*store.Record{},
 		rule: store.RuleVersion{
 			Version: "v1", MinDurationSeconds: 300, MaxDistanceMeters: 500,
+			TimeoutHours: 24, ReportTimeoutHours: 72,
 		},
 		catalog: store.Catalog{
 			MRs:      []store.MR{{ID: "mr-1", Name: "Chen Wei", Region: "East China"}},
@@ -1098,4 +1099,31 @@ func TestTimeoutSweepOnRead(t *testing.T) {
 	if second.Cancelled != 0 || second.Voided != 0 {
 		t.Fatalf("sweep is not idempotent: %+v", second)
 	}
+}
+
+func (f *fakeRepo) RuleHistory(ctx context.Context, limit int) ([]store.RuleVersion, error) {
+	return []store.RuleVersion{f.rules()}, nil
+}
+
+func (f *fakeRepo) SetRulesWithTimeouts(
+	ctx context.Context, th domain.Thresholds, timeoutHours, reportTimeoutHours int, by, note string,
+) (store.RuleVersion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rule.MinDurationSeconds == th.MinDurationSeconds &&
+		f.rule.MaxDistanceMeters == th.MaxDistanceMeters &&
+		f.rule.TimeoutHours == timeoutHours &&
+		f.rule.ReportTimeoutHours == reportTimeoutHours {
+		return f.rule, nil
+	}
+	f.rule = store.RuleVersion{
+		Version:            "v2",
+		MinDurationSeconds: th.MinDurationSeconds,
+		MaxDistanceMeters:  th.MaxDistanceMeters,
+		TimeoutHours:       timeoutHours,
+		ReportTimeoutHours: reportTimeoutHours,
+		CreatedBy:          by,
+		Note:               note,
+	}
+	return f.rule, nil
 }

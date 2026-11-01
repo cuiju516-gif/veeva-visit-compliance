@@ -503,6 +503,26 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
       checkoutHint.textContent = '签到后可用。';
     }
 
+    if (visit.evaluation) {
+      const ev = visit.evaluation;
+      // The snapshot is the point of the design: say which rules were in force
+      // and when the verdict was reached, not just "abnormal".
+      const distances = [
+        ev.distanceInM === null ? null : `签到 ${Math.round(ev.distanceInM)} 米`,
+        ev.distanceOutM === null ? null : `签退 ${Math.round(ev.distanceOutM)} 米`,
+      ].filter((part): part is string => part !== null).join(' · ');
+      const parts = [
+        `规则 ${ev.ruleVersion}`,
+        `阈值 ${ev.thresholds.minDurationSec} 秒 / ${ev.thresholds.maxDistanceM} 米`,
+      ];
+      if (distances !== '') parts.push(distances);
+      complianceNote.textContent = `${parts.join(' · ')}（${ev.source === 'void_backfill' ? '作废补判' : '签退判定'}）`;
+    }
+
+    if (visit.reportOverdue) {
+      terminalHint.textContent = '记录缺失：签退后超过补记录时限仍未提交拜访记录。';
+    }
+
     if (visit.capabilities.canReport) {
       reportHint.textContent = 'Submitting files the report and marks the visit REPORTED.';
     } else if (visit.status === 'REPORTED') {

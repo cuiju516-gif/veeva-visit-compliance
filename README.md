@@ -134,6 +134,10 @@ never out) is reported as *incomplete* rather than *compliant*.
   cannot rewrite history; master rows are logically deleted, never removed.
 - **A hospital is its own table.** It owns the coordinate the 500 m rule depends on, so fixing a
   wrong coordinate is one edit rather than one per doctor at that site.
+- **The report-missing flag is derived, not stored.** `reportOverdue` is computed on read from
+  `report_timeout_hours`, so there is no column to drift out of sync with the clock.
+- **Thresholds are edited in the UI** by the administrator (a card that only renders for that
+  actor); saving identical numbers returns the existing version instead of inventing one.
 - **Timeouts are applied when someone reads.** Every list/detail/dashboard request first runs an
   idempotent sweep (`Converge`): a plan past its timeout becomes CANCELLED, an abandoned check-in
   becomes VOIDED with the same evidence a manual void leaves. There is no background job, so no

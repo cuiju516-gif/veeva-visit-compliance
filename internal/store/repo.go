@@ -43,7 +43,12 @@ type Record struct {
 	Department   string
 	HospitalBase domain.Coordinates
 	ProductName  string
-	Materials    []Material
+	Materials []Material
+
+	// ReportOverdue is derived at read time, not stored: a CHECKED_OUT visit
+	// whose report is older than the rule's report timeout. Keeping it out of
+	// the schema means there is no column to keep in sync with the clock.
+	ReportOverdue bool
 }
 
 // Catalog is the reference data that fills the form's dropdowns.
@@ -183,9 +188,11 @@ type Repo interface {
 	Delete(ctx context.Context, id string, now time.Time) (Record, error)
 	Dashboard(ctx context.Context, months int, mrid string) (Dashboard, error)
 	CurrentRules(ctx context.Context) (RuleVersion, error)
+	RuleHistory(ctx context.Context, limit int) ([]RuleVersion, error)
 	// SetRules creates a new version when the thresholds actually change, and
 	// returns the resulting version either way.
 	SetRules(ctx context.Context, th domain.Thresholds, by, note string) (RuleVersion, error)
+	SetRulesWithTimeouts(ctx context.Context, th domain.Thresholds, timeoutHours, reportTimeoutHours int, by, note string) (RuleVersion, error)
 	// Converge applies the timeout transitions that are due. It is idempotent:
 	// running it twice in the same second changes nothing the second time.
 	Converge(ctx context.Context, now time.Time) (ConvergeResult, error)

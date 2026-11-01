@@ -382,7 +382,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 type rulesRequest struct {
 	MinDurationSeconds int     `json:"minDurationSeconds"`
 	MaxDistanceMeters  float64 `json:"maxDistanceMeters"`
-	Note               string  `json:"note"`
+	// The two timeouts ride along with the compliance thresholds: they are part
+	// of the same version, so saving one number must not silently keep the other
+	// at whatever the previous version had.
+	TimeoutHours       int    `json:"timeoutHours"`
+	ReportTimeoutHours int    `json:"reportTimeoutHours"`
+	Note               string `json:"note"`
 }
 
 type rulesResponse struct {
@@ -412,10 +417,12 @@ func (s *Server) handleGetRules(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, rulesResponse{
-		RuleVersion: current,
-		History:     []store.RuleVersion{current},
-	})
+	history, err := s.repo.RuleHistory(ctx, 20)
+	if err != nil {
+		s.handleError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rulesResponse{RuleVersion: current, History: history})
 }
 
 func (s *Server) handlePutRules(w http.ResponseWriter, r *http.Request) {
@@ -440,7 +447,8 @@ func (s *Server) handlePutRules(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
-	version, err := s.repo.SetRules(ctx, th, actorFrom(r.Context()).MRID, req.Note)
+	version, err := s.repo.SetRulesWithTimeouts(ctx,
+		th, req.TimeoutHours, req.ReportTimeoutHours, actorFrom(r.Context()).MRID, req.Note)
 	if err != nil {
 		s.handleError(w, r, err)
 		return

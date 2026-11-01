@@ -1,7 +1,7 @@
 import type { ApiError } from './api';
-import type { Catalog, Dashboard, Visit, VisitStatus } from './types';
+import type { Catalog, Dashboard, RuleVersion, Visit, VisitStatus } from './types';
 
-type FormKey = 'plan' | 'checkin' | 'checkout' | 'report' | 'terminal';
+type FormKey = 'plan' | 'checkin' | 'checkout' | 'report' | 'terminal' | 'rules';
 
 type ErrorScope =
   | 'catalog'
@@ -28,6 +28,9 @@ export interface LoadingState {
 export interface AppState {
   /** The X-Actor value currently in force; '' means the administrator. */
   actor: string;
+  /** Current threshold version, loaded only for the administrator. */
+  rules: RuleVersion | null;
+  ruleHistory: RuleVersion[];
   catalog: Catalog | null;
   visits: Visit[];
   selected: Visit | null;
@@ -47,6 +50,8 @@ function createInitialState(): AppState {
   return {
     catalog: null,
     actor: '',
+    rules: null,
+    ruleHistory: [],
     visits: [],
     selected: null,
     dashboard: null,
@@ -68,6 +73,7 @@ function createInitialState(): AppState {
       checkout: null,
       report: null,
       terminal: null,
+      rules: null,
     },
   };
 }
