@@ -8,6 +8,7 @@ import {
   getDashboard,
   getVisit,
   listVisits,
+  setActor,
   submitReport,
   toApiError,
   voidVisit,
@@ -57,6 +58,71 @@ let catalogSeq = 0;
 let listSeq = 0;
 let visitSeq = 0;
 let dashboardSeq = 0;
+
+/**
+ * The identity rail. There is no login (the brief does not ask for one), so the
+ * app ships the same switcher the prototype has: two reps and an administrator.
+ * Switching re-scopes every query, because the server filters by X-Actor.
+ */
+interface Identity {
+  key: string;
+  label: string;
+  role: string;
+  badge: string;
+}
+
+const IDENTITIES: Identity[] = [
+  { key: '11111111-1111-1111-1111-111111111111', label: '张伟', role: '医药代表', badge: 'MR' },
+  { key: '11111111-1111-1111-1111-111111111112', label: '李娜', role: '医药代表', badge: 'MR' },
+  { key: 'admin', label: '王敏', role: '系统管理员', badge: 'AD' },
+];
+
+let currentActor = 'admin';
+
+const identityList = must<HTMLElement>(document, '#identity-list');
+const actorNote = must<HTMLElement>(document, '#actor-note');
+
+function renderIdentities(): void {
+  identityList.replaceChildren();
+  for (const identity of IDENTITIES) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'rail-button';
+    if (identity.key === currentActor) button.classList.add('is-active');
+    button.dataset.actor = identity.key;
+    button.title = `${identity.role} · ${identity.label}`;
+
+    const badge = document.createElement('span');
+    badge.className = 'rail-badge';
+    badge.textContent = identity.badge;
+    const name = document.createElement('span');
+    name.className = 'rail-name';
+    name.textContent = identity.label;
+    const role = document.createElement('span');
+    role.className = 'rail-role';
+    role.textContent = identity.role;
+
+    button.append(badge, name, role);
+    button.addEventListener('click', () => {
+      void switchActor(identity.key);
+    });
+    identityList.append(button);
+  }
+
+  const active = IDENTITIES.find((identity) => identity.key === currentActor);
+  actorNote.textContent = active === undefined ? '' : `${active.role} · ${active.label}`;
+}
+
+async function switchActor(key: string): Promise<void> {
+  if (key === currentActor) return;
+  currentActor = key;
+  setActor(key);
+  store.update((state) => ({ ...state, actor: key === 'admin' ? '' : key }));
+  renderIdentities();
+  // The previous selection and every cached row belong to someone else.
+  store.update((state) => ({ ...state, selected: null }));
+  await Promise.all([loadVisits(), loadDashboard()]);
+}
 
 function render(state: AppState): void {
   planView.update(state);
@@ -356,4 +422,6 @@ store.update((state) => ({
 store.subscribe(render);
 render(store.getState());
 
+renderIdentities();
+setActor(currentActor);
 void Promise.all([loadCatalog(), loadVisits(), loadDashboard()]);

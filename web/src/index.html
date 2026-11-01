@@ -1,23 +1,31 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Proof of visit for pharma reps: server-timed check-in, GPS evidence and compliant call reports.">
-  <title>Field Visit Compliance</title>
+  <meta name="description" content="医药代表学术拜访合规系统：服务端时间戳、GPS 证据与合规拜访记录。">
+  <title>学术拜访合规</title>
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <aside class="identity-rail" aria-label="切换身份">
+    <div class="rail-head">演示身份</div>
+    <div class="rail-list" id="identity-list"></div>
+  </aside>
 
   <header class="app-header">
     <div class="app-header-inner">
       <div>
-        <h1>Field Visit Compliance</h1>
-        <p class="subtitle">Plan, prove and report every HCP visit — server-timed and location-aware.</p>
+        <h1>学术拜访合规</h1>
+        <p class="subtitle">计划、证明并记录每一次拜访 —— 时间由服务端盖章，位置可核验。</p>
       </div>
-      <button class="btn btn-small" type="button" id="refresh" data-testid="refresh-all">Refresh</button>
+      <div class="header-actions">
+        <span class="actor-note" id="actor-note"></span>
+        <button class="btn btn-small" type="button" id="refresh" data-testid="refresh-all">刷新</button>
+      </div>
     </div>
   </header>
 
@@ -33,7 +41,7 @@
   </main>
 
   <noscript>
-    <p class="noscript">This application requires JavaScript.</p>
+    <p class="noscript">本应用需要启用 JavaScript。</p>
   </noscript>
 </body>
 </html>

@@ -1,5 +1,5 @@
 import { el, must, option } from '../dom';
-import { formatShortDate, formatShortTime, formatStatus, isVisitStatus, pluralize } from '../format';
+import { formatShortDate, formatShortTime, formatStatus, isVisitStatus } from '../format';
 import type { AppState, Filters } from '../state';
 import type { Catalog, Visit } from '../types';
 import { createErrorBanner } from './errorBanner';
@@ -17,44 +17,44 @@ const TEMPLATE = `
   <section class="card list-card" aria-labelledby="visits-heading">
     <div class="card-head">
       <div>
-        <h2 id="visits-heading">Visits</h2>
-        <p class="hint">Newest planned first.</p>
+        <h2 id="visits-heading">拜访</h2>
+        <p class="hint">按计划时间倒序。</p>
       </div>
       <span class="count" data-count data-testid="visit-count"></span>
     </div>
     <div class="filters">
       <div class="field">
-        <label for="filter-status">Status</label>
+        <label for="filter-status">状态</label>
         <select id="filter-status" data-status-filter data-testid="visit-filter-status">
-          <option value="">All statuses</option>
-          <option value="PLANNED">Planned</option>
-          <option value="CHECKED_IN">Checked in</option>
-          <option value="CHECKED_OUT">Checked out</option>
-          <option value="REPORTED">Reported</option>
-          <option value="CANCELLED">Cancelled</option>
-          <option value="VOIDED">Voided</option>
-          <option value="DELETED">Deleted</option>
+          <option value="">全部状态</option>
+          <option value="PLANNED">已计划</option>
+          <option value="CHECKED_IN">已签到</option>
+          <option value="CHECKED_OUT">已签退</option>
+          <option value="REPORTED">已完成</option>
+          <option value="CANCELLED">已取消</option>
+          <option value="VOIDED">已作废</option>
+          <option value="DELETED">已删除</option>
         </select>
       </div>
       <div class="field">
-        <label for="filter-product">Product</label>
+        <label for="filter-product">药品</label>
         <select id="filter-product" data-product-filter data-testid="visit-filter-product">
-          <option value="">All products</option>
+          <option value="">全部药品</option>
         </select>
       </div>
-      <button class="btn btn-small filter-clear" type="button" data-clear hidden>Clear filters</button>
+      <button class="btn btn-small filter-clear" type="button" data-clear hidden>清除筛选</button>
     </div>
     <div data-list-banner></div>
     <div class="table-wrap" data-table-wrap>
       <table class="visits-table" data-testid="visit-table">
         <thead>
           <tr>
-            <th scope="col">Planned</th>
-            <th scope="col">HCP</th>
-            <th scope="col">Hospital</th>
-            <th scope="col">Product</th>
-            <th scope="col">Status</th>
-            <th scope="col">Abnormal</th>
+            <th scope="col">已计划</th>
+            <th scope="col">医生</th>
+            <th scope="col">医院</th>
+            <th scope="col">药品</th>
+            <th scope="col">状态</th>
+            <th scope="col">异常</th>
           </tr>
         </thead>
         <tbody data-rows></tbody>
@@ -62,7 +62,7 @@ const TEMPLATE = `
     </div>
     <div class="empty-state" data-empty hidden>
       <p data-empty-title></p>
-      <button class="btn btn-small" type="button" data-empty-clear hidden>Clear filters</button>
+      <button class="btn btn-small" type="button" data-empty-clear hidden>清除筛选</button>
     </div>
   </section>
 `;
@@ -124,7 +124,7 @@ export function mountListView(host: HTMLElement, handlers: ListHandlers): ListVi
 
   function buildProductFilter(catalog: Catalog | null): void {
     const previous = productFilter.value;
-    productFilter.replaceChildren(option('', 'All products'));
+    productFilter.replaceChildren(option('', '全部药品'));
     for (const product of catalog?.products ?? []) {
       productFilter.append(option(product.id, product.name));
     }
@@ -170,11 +170,11 @@ export function mountListView(host: HTMLElement, handlers: ListHandlers): ListVi
 
     const abnormal = el('td');
     if (visit.abnormal) {
-      const badge = el('span', 'badge badge-abnormal', 'Abnormal');
+      const badge = el('span', 'badge badge-abnormal', '异常');
       badge.title = visit.flags.map((flag) => `${flag.code}: ${flag.detail}`).join('\n');
       abnormal.append(badge);
     } else if (visit.status === 'CHECKED_OUT' || visit.status === 'REPORTED') {
-      abnormal.append(el('span', 'badge badge-ok', 'OK'));
+      abnormal.append(el('span', 'badge badge-ok', '合规'));
     } else {
       abnormal.append(el('span', 'cell-muted', '—'));
     }
@@ -209,13 +209,13 @@ export function mountListView(host: HTMLElement, handlers: ListHandlers): ListVi
     }
 
     if (state.loading.visits) {
-      emptyTitle.textContent = 'Loading visits…';
+      emptyTitle.textContent = '正在加载拜访…';
     } else if (state.errors.list) {
-      emptyTitle.textContent = 'Visits could not be loaded.';
+      emptyTitle.textContent = '拜访列表加载失败。';
     } else if (filtered) {
-      emptyTitle.textContent = 'No visits match the current filters.';
+      emptyTitle.textContent = '没有符合筛选条件的拜访。';
     } else {
-      emptyTitle.textContent = 'No visits yet. Plan the first visit on the left.';
+      emptyTitle.textContent = '还没有拜访记录。先在左侧创建一个计划。';
     }
   }
 
@@ -237,7 +237,7 @@ export function mountListView(host: HTMLElement, handlers: ListHandlers): ListVi
       card.setAttribute('aria-busy', String(state.loading.visits));
       countEl.textContent = state.loading.visits
         ? 'Loading…'
-        : pluralize(state.visits.length, 'visit');
+        : `共 ${state.visits.length} 条`;
       banner.show(state.errors.list);
 
       const signature = rowSignature(state.visits);

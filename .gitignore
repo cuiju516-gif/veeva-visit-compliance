@@ -10,3 +10,6 @@ bin/
 veeva-exercise.pdf
 
 .DS_Store
+
+# 本地演示用的构建产物
+.tools-run/

@@ -109,6 +109,10 @@ func (s *Server) handleGetVisit(w http.ResponseWriter, r *http.Request) {
 		s.handleError(w, r, err)
 		return
 	}
+	if actor := actorFrom(r.Context()); !actor.IsAdmin() && rec.Visit.MRID != actor.MRID {
+		s.fail(w, http.StatusForbidden, CodeForbidden, "this visit belongs to another rep", nil)
+		return
+	}
 	writeJSON(w, http.StatusOK, toVisitDTO(rec))
 }
 
@@ -116,8 +120,12 @@ func (s *Server) handleListVisits(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
+	actor := actorFrom(r.Context())
 	params := store.ListParams{
 		ProductID: r.URL.Query().Get("productId"),
+		// The scope comes from the actor, not from the query string: a client
+		// that could name another rep would defeat the point of the switcher.
+		MRID: actor.MRID,
 	}
 	if raw := r.URL.Query().Get("status"); raw != "" {
 		status := domain.Status(strings.ToUpper(raw))
@@ -260,7 +268,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
-	dash, err := s.repo.Dashboard(ctx, months)
+	dash, err := s.repo.Dashboard(ctx, months, actorFrom(r.Context()).MRID)
 	if err != nil {
 		s.handleError(w, r, err)
 		return

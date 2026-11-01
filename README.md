@@ -95,6 +95,9 @@ never out) is reported as *incomplete* rather than *compliant*.
 
 | Method | Path | Purpose |
 |---|---|---|
+> Every request carries `X-Actor`: an MR uuid (that rep's rows only) or the literal `admin`
+> (everything). No header means *no rows* — the scoping fails closed rather than open.
+
 | `GET` | `/api/catalog` | MRs, HCPs (with base coordinates), products |
 | `POST` | `/api/visits` | Create a planned visit |
 | `POST` | `/api/visits/{id}/checkin` | `{lat,lng}` → state `CHECKED_IN` |

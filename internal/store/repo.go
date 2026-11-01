@@ -97,7 +97,10 @@ type ReportParams struct {
 type ListParams struct {
 	Status    domain.Status
 	ProductID string
-	Limit     int
+	// MRID limits the result to one rep's visits. Empty means "all", which only
+	// an admin actor is allowed to ask for.
+	MRID  string
+	Limit int
 }
 
 // MonthlyRow is one product in one month on the dashboard.
@@ -132,7 +135,7 @@ type Repo interface {
 	Cancel(ctx context.Context, id, reason string, at time.Time) (Record, error)
 	Void(ctx context.Context, id, reason string, at time.Time, th domain.Thresholds) (Record, error)
 	Delete(ctx context.Context, id string, now time.Time) (Record, error)
-	Dashboard(ctx context.Context, months int) (Dashboard, error)
+	Dashboard(ctx context.Context, months int, mrid string) (Dashboard, error)
 }
 
 // StateError means the visit exists but is not in a state that allows the

@@ -179,7 +179,7 @@ func TestRepositoryLifecycle(t *testing.T) {
 		t.Fatalf("catalog: %v", err)
 	}
 
-	before, err := repo.Dashboard(ctx, 6)
+	before, err := repo.Dashboard(ctx, 6, "")
 	if err != nil {
 		t.Fatalf("dashboard before: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestRepositoryLifecycle(t *testing.T) {
 		t.Fatalf("version after check-out = %d, want 3", out.Visit.Version)
 	}
 
-	after, err := repo.Dashboard(ctx, 6)
+	after, err := repo.Dashboard(ctx, 6, "")
 	if err != nil {
 		t.Fatalf("dashboard after: %v", err)
 	}

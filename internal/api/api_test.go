@@ -90,6 +90,9 @@ func (f *fakeRepo) List(ctx context.Context, p store.ListParams) ([]store.Record
 		if p.Status != "" && r.Visit.Status != p.Status {
 			continue
 		}
+		if p.MRID != "" && r.Visit.MRID != p.MRID {
+			continue
+		}
 		out = append(out, *r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Visit.PlannedAt.After(out[j].Visit.PlannedAt) })
@@ -165,7 +168,7 @@ func (f *fakeRepo) SubmitReport(ctx context.Context, id string, p store.ReportPa
 	return *rec, nil
 }
 
-func (f *fakeRepo) Dashboard(ctx context.Context, months int) (store.Dashboard, error) {
+func (f *fakeRepo) Dashboard(ctx context.Context, months int, mrid string) (store.Dashboard, error) {
 	return f.dash, nil
 }
 
@@ -545,7 +548,9 @@ func TestListAndCatalog(t *testing.T) {
 	h.createPlanned()
 	h.createPlanned()
 
-	resp, raw := h.do(http.MethodGet, "/api/visits?status=PLANNED", nil)
+	// Listing is scoped by actor: with no header the API deliberately returns
+	// nothing (fail closed), so the test has to say who is asking.
+	resp, raw := h.doAs("mr-1", http.MethodGet, "/api/visits?status=PLANNED", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list: status %d", resp.StatusCode)
 	}
@@ -858,6 +863,110 @@ func TestDeleteWindowEnforced(t *testing.T) {
 		resp, raw := h.do(http.MethodDelete, "/api/visits/"+v.ID, nil)
 		if resp.StatusCode != http.StatusConflict {
 			t.Fatalf("status = %d, want 409; body %s", resp.StatusCode, raw)
+		}
+	})
+}
+
+// --- actor scoping --------------------------------------------------------
+
+func (h *harness) doAs(actor, method, path string, body any) (*http.Response, []byte) {
+	h.t.Helper()
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			h.t.Fatalf("marshal: %v", err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, h.http.URL+path, reader)
+	if err != nil {
+		h.t.Fatalf("new request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if actor != "" {
+		req.Header.Set("X-Actor", actor)
+	}
+	resp, err := h.http.Client().Do(req)
+	if err != nil {
+		h.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		h.t.Fatalf("read body: %v", err)
+	}
+	return resp, raw
+}
+
+func TestActorScopesVisits(t *testing.T) {
+	h := newHarness(t)
+
+	h.createPlanned() // created as mr-1 by default
+	other := domain.Visit{
+		ID: "visit-other", MRID: "mr-2", HCPID: "hcp-1", ProductID: "prod-1",
+		PlannedAt: time.Now().Add(24 * time.Hour), Status: domain.StatusPlanned,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(), Version: 1,
+	}
+	h.repo.records[other.ID] = &store.Record{Visit: other, MRName: "Liu Yang"}
+
+	t.Run("a rep sees only their own", func(t *testing.T) {
+		resp, raw := h.doAs("mr-1", http.MethodGet, "/api/visits", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d; body %s", resp.StatusCode, raw)
+		}
+		var out struct {
+			Count int `json:"count"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out.Count != 1 {
+			t.Fatalf("count = %d, want 1 (only own visits)", out.Count)
+		}
+	})
+
+	t.Run("an admin sees everyone", func(t *testing.T) {
+		resp, raw := h.doAs("admin", http.MethodGet, "/api/visits", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d; body %s", resp.StatusCode, raw)
+		}
+		var out struct {
+			Count int `json:"count"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out.Count != 2 {
+			t.Fatalf("count = %d, want 2", out.Count)
+		}
+	})
+
+	t.Run("opening another rep's visit is forbidden", func(t *testing.T) {
+		resp, raw := h.doAs("mr-1", http.MethodGet, "/api/visits/"+other.ID, nil)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body %s", resp.StatusCode, raw)
+		}
+		if e := h.decodeError(raw); e.Code != CodeForbidden {
+			t.Fatalf("code = %q, want forbidden", e.Code)
+		}
+	})
+
+	t.Run("no header sees nothing", func(t *testing.T) {
+		resp, raw := h.doAs("", http.MethodGet, "/api/visits", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d; body %s", resp.StatusCode, raw)
+		}
+		var out struct {
+			Count int `json:"count"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if out.Count != 0 {
+			t.Fatalf("count = %d, want 0: an unknown actor must fail closed", out.Count)
 		}
 	})
 }

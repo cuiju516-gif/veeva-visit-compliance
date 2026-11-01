@@ -84,10 +84,28 @@ function readErrorEnvelope(value: unknown): ApiErrorEnvelope['error'] | null {
   return { code: raw['code'], message: raw['message'], details };
 }
 
+/**
+ * The current actor, sent on every call as X-Actor. There is no login, so this
+ * is the whole of "who am I"; it decides which rows the server returns.
+ */
+let actor = 'admin';
+
+export function setActor(next: string): void {
+  actor = next;
+}
+
+export function getActor(): string {
+  return actor;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
+  const options: RequestInit = {
+    ...init,
+    headers: { ...(init?.headers ?? {}), 'X-Actor': actor },
+  };
   try {
-    response = await fetch(path, init);
+    response = await fetch(path, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Network request failed.';
     throw new ApiError(0, 'network_error', message);

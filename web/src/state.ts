@@ -26,6 +26,8 @@ export interface LoadingState {
 }
 
 export interface AppState {
+  /** The X-Actor value currently in force; '' means the administrator. */
+  actor: string;
   catalog: Catalog | null;
   visits: Visit[];
   selected: Visit | null;
@@ -44,6 +46,7 @@ export interface Store {
 function createInitialState(): AppState {
   return {
     catalog: null,
+    actor: '',
     visits: [],
     selected: null,
     dashboard: null,

@@ -21,35 +21,35 @@ const TEMPLATE = `
   <section class="card plan-card" aria-labelledby="plan-heading">
     <div class="card-head">
       <div>
-        <h2 id="plan-heading">Plan a visit</h2>
-        <p class="hint">Step 1 — book the HCP call.</p>
+        <h2 id="plan-heading">新建拜访计划</h2>
+        <p class="hint">第 1 步 —— 约见医生。</p>
       </div>
     </div>
     <form class="plan-form" data-plan-form data-testid="plan-form">
       <div class="field">
-        <label for="plan-mr">MR</label>
+        <label for="plan-mr">医药代表</label>
         <select id="plan-mr" name="mrId" data-testid="plan-mr" required>
-          <option value="">Loading catalog…</option>
+          <option value="">正在加载目录…</option>
         </select>
       </div>
       <div class="field">
-        <label for="plan-hcp">HCP</label>
+        <label for="plan-hcp">医生</label>
         <select id="plan-hcp" name="hcpId" data-testid="plan-hcp" required>
-          <option value="">Loading catalog…</option>
+          <option value="">正在加载目录…</option>
         </select>
       </div>
       <div class="field">
-        <label for="plan-product">Product</label>
+        <label for="plan-product">药品</label>
         <select id="plan-product" name="productId" data-testid="plan-product" required>
-          <option value="">Loading catalog…</option>
+          <option value="">正在加载目录…</option>
         </select>
       </div>
       <div class="field">
-        <label for="plan-at">Planned at</label>
+        <label for="plan-at">计划时间</label>
         <input id="plan-at" name="plannedAt" data-testid="plan-planned-at" type="datetime-local" step="60" required>
       </div>
       <div class="plan-actions">
-        <button class="btn btn-primary" type="submit" data-testid="plan-submit" disabled>Plan visit</button>
+        <button class="btn btn-primary" type="submit" data-testid="plan-submit" disabled>创建计划</button>
       </div>
       <div class="plan-error" data-plan-banner></div>
     </form>
@@ -101,12 +101,12 @@ export function mountPlanView(host: HTMLElement, handlers: PlanHandlers): PlanVi
   function populateCatalog(catalog: Catalog | null): void {
     fillSelect(
       mrSelect,
-      catalog === null ? 'Loading catalog…' : 'Select MR…',
+      catalog === null ? '正在加载目录…' : '请选择代表…',
       (catalog?.mrs ?? []).map((mr) => ({ value: mr.id, label: `${mr.name} — ${mr.region}` })),
     );
     fillSelect(
       hcpSelect,
-      catalog === null ? 'Loading catalog…' : 'Select HCP…',
+      catalog === null ? '正在加载目录…' : '请选择医生…',
       (catalog?.hcps ?? []).map((hcp) => ({
         value: hcp.id,
         label: `${hcp.name} — ${hcp.hospitalName}`,
@@ -114,15 +114,23 @@ export function mountPlanView(host: HTMLElement, handlers: PlanHandlers): PlanVi
     );
     fillSelect(
       productSelect,
-      catalog === null ? 'Loading catalog…' : 'Select product…',
+      catalog === null ? '正在加载目录…' : '请选择药品…',
       (catalog?.products ?? []).map((product) => ({
         value: product.id,
         label: `${product.name} (${product.code})`,
       })),
     );
-    mrSelect.disabled = catalog === null;
+    // A rep can only plan their own visits, so the selector is locked to them.
+    // The server would refuse anything else anyway (X-Actor), and showing an
+    // editable list of other reps here would be an invitation to a 403.
+    const actor = current === null ? '' : current.actor;
+    mrSelect.disabled = catalog === null || actor !== '';
+    if (actor !== '' && mrSelect.value !== actor) {
+      mrSelect.value = actor;
+    }
     hcpSelect.disabled = catalog === null;
     productSelect.disabled = catalog === null;
+    syncSubmit();
   }
 
   function reset(): void {
@@ -156,7 +164,7 @@ export function mountPlanView(host: HTMLElement, handlers: PlanHandlers): PlanVi
     if (!form.reportValidity()) return;
     const input = readForm();
     if (input === null) {
-      banner.showText('Choose an MR, an HCP, a product and a planned time.');
+      banner.showText('请选择代表、医生、药品与计划时间。');
       return;
     }
     void handlers.onCreate(input).then((created) => {

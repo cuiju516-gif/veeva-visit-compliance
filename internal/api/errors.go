@@ -17,6 +17,7 @@ const (
 	CodeNotFound     = "not_found"
 	CodeInvalidState = "invalid_state"
 	CodeConflict     = "conflict"
+	CodeForbidden    = "forbidden"
 	CodeInternal     = "internal_error"
 )
 

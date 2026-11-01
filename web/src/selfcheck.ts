@@ -33,11 +33,11 @@ function close(actual: number, expected: number, tolerance: number, label: strin
 }
 
 // formatDuration -----------------------------------------------------------
-equal(formatDuration(0), '0s', 'duration 0');
-equal(formatDuration(30), '30s', 'duration 30');
-equal(formatDuration(125), '2m 5s', 'duration 125');
-equal(formatDuration(750), '12m 30s', 'duration 750');
-equal(formatDuration(3661), '1h 1m 1s', 'duration 3661');
+equal(formatDuration(0), '0 秒', 'duration 0');
+equal(formatDuration(30), '30 秒', 'duration 30');
+equal(formatDuration(125), '2 分 5 秒', 'duration 125');
+equal(formatDuration(750), '12 分 30 秒', 'duration 750');
+equal(formatDuration(3661), '1 小时 1 分 1 秒', 'duration 3661');
 equal(formatDuration(Number.NaN), '—', 'duration NaN');
 
 // formatPercent ------------------------------------------------------------
@@ -60,7 +60,7 @@ equal(formatShortDate('not-a-date'), '—', 'short date invalid');
 equal(formatShortTime('not-a-date'), '—', 'short time invalid');
 equal(formatShortDate(new Date(2026, 4, 6, 13, 5).toISOString()), '2026-05-06', 'short date ISO');
 equal(formatShortTime(new Date(2026, 4, 6, 13, 5).toISOString()), '13:05', 'short time padded');
-equal(formatMonthLabel('2026-05'), 'May 2026', 'month label');
+equal(formatMonthLabel('2026-05'), '5月 2026', 'month label');
 
 // haversine ----------------------------------------------------------------
 close(haversineMeters({ lat: 31.2119, lng: 121.4661 }, { lat: 31.2119, lng: 121.4661 }), 0, 1e-9, 'haversine same point');

@@ -319,6 +319,10 @@ func (p *Postgres) List(ctx context.Context, lp ListParams) ([]Record, error) {
 		args = append(args, lp.ProductID)
 		where += fmt.Sprintf(" AND v.product_id = $%d", len(args))
 	}
+	if lp.MRID != "" {
+		args = append(args, lp.MRID)
+		where += fmt.Sprintf(" AND v.mr_id = $%d", len(args))
+	}
 	args = append(args, lp.Limit)
 	sql += where + fmt.Sprintf(" ORDER BY v.planned_at DESC LIMIT $%d", len(args))
 
@@ -583,7 +587,10 @@ func (p *Postgres) classifyMiss(ctx context.Context, id, action string) error {
 
 // Dashboard aggregates visits per product per month (the brief's reporting
 // requirement), counting by check-in month in the business timezone.
-func (p *Postgres) Dashboard(ctx context.Context, months int) (Dashboard, error) {
+// Dashboard aggregates per product per month. A non-empty mrid restricts every
+// number to that rep; that is what "my dashboard" means, and it is applied in
+// SQL rather than by filtering rows afterwards.
+func (p *Postgres) Dashboard(ctx context.Context, months int, mrid string) (Dashboard, error) {
 	if months <= 0 || months > 24 {
 		months = 6
 	}
@@ -608,8 +615,9 @@ func (p *Postgres) Dashboard(ctx context.Context, months int) (Dashboard, error)
 		  LEFT JOIN visit_flag f ON f.visit_id = v.id
 		 WHERE v.checkin_at IS NOT NULL
 		   AND v.checkin_at >= $1
+		   AND ($2 = '' OR v.mr_id = $2::uuid)
 		 GROUP BY 1, 2, 3
-		 ORDER BY 1, 3`, firstMonth)
+		 ORDER BY 1, 3`, firstMonth, mrid)
 	if err != nil {
 		return Dashboard{}, err
 	}

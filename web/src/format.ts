@@ -8,20 +8,20 @@ import type { VisitStatus } from './types';
 // not have to work out whether 05/06 is May or June, and the README's screenshots
 // should not change shape depending on who is looking at them.
 const MONTH_NAMES = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  '1月', '2月', '3月', '4月', '5月', '6月',
+  '7月', '8月', '9月', '10月', '11月', '12月',
 ] as const;
 
 const pad2 = (value: number): string => String(value).padStart(2, '0');
 
 const STATUS_LABELS: Record<VisitStatus, string> = {
-  PLANNED: 'Planned',
-  CHECKED_IN: 'Checked in',
-  CHECKED_OUT: 'Checked out',
-  REPORTED: 'Reported',
-  CANCELLED: 'Cancelled',
+  PLANNED: '已计划',
+  CHECKED_IN: '已签到',
+  CHECKED_OUT: '已签退',
+  REPORTED: '已完成',
+  CANCELLED: '已取消',
   VOIDED: 'Voided',
-  DELETED: 'Deleted',
+  DELETED: '已删除',
 };
 
 export function formatStatus(status: VisitStatus): string {
@@ -64,9 +64,9 @@ export function formatDuration(totalSeconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const rest = seconds % 60;
-  if (hours > 0) return `${hours}h ${minutes}m ${rest}s`;
-  if (minutes > 0) return `${minutes}m ${rest}s`;
-  return `${rest}s`;
+  if (hours > 0) return `${hours} 小时 ${minutes} 分 ${rest} 秒`;
+  if (minutes > 0) return `${minutes} 分 ${rest} 秒`;
+  return `${rest} 秒`;
 }
 
 /** Formats a [0, 1] fraction as a human percentage, e.g. 0.125 -> "13%". */

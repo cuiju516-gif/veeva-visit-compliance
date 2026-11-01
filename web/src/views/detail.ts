@@ -26,12 +26,12 @@ interface MaterialDraft {
 
 const MATERIAL_KINDS: Array<{ value: MaterialKind; label: string }> = [
   { value: 'slide', label: 'Slide' },
-  { value: 'reprint', label: 'Reprint' },
-  { value: 'document', label: 'Document' },
+  { value: 'reprint', label: '重印件' },
+  { value: 'document', label: '文献' },
   { value: 'other', label: 'Other' },
 ];
 
-const STEP_LABELS = ['Plan', 'Check-in', 'Detailing', 'Check-out', 'Call report'];
+const STEP_LABELS = ['计划', '签到', '学术沟通', '签退', '反馈记录'];
 
 const STEP_STATES: Record<VisitStatus, Array<'done' | 'current' | 'pending'>> = {
   PLANNED: ['done', 'current', 'pending', 'pending', 'pending'],
@@ -49,12 +49,12 @@ const TEMPLATE = `
   <section class="card detail-card" data-testid="visit-detail" aria-labelledby="detail-heading">
     <div data-detail-banner></div>
     <div class="detail-empty" data-detail-empty>
-      <p data-detail-empty-text>Select a visit from the list to see its details and compliance evidence.</p>
+      <p data-detail-empty-text>从左侧列表选择一条拜访，查看详情与合规证据。</p>
     </div>
     <div class="detail-body" data-detail-body hidden>
       <header class="detail-head">
         <div class="detail-title">
-          <p class="eyebrow">Selected visit</p>
+          <p class="eyebrow">拜访详情</p>
           <h2 id="detail-heading" data-detail-hcp></h2>
           <p class="detail-subtitle" data-detail-subtitle></p>
         </div>
@@ -63,10 +63,10 @@ const TEMPLATE = `
 
       <div class="abnormal-panel" data-abnormal hidden aria-labelledby="abnormal-heading">
         <div class="abnormal-head">
-          <h3 id="abnormal-heading">Abnormal visit</h3>
-          <span class="badge badge-abnormal">Flagged</span>
+          <h3 id="abnormal-heading">异常拜访</h3>
+          <span class="badge badge-abnormal">异常</span>
         </div>
-        <p class="abnormal-intro">The server raised the following compliance flags at check-out. Every flag is listed.</p>
+        <p class="abnormal-intro">服务端在签退时命中以下合规规则，全部列出。</p>
         <ul class="flag-list" data-flag-list data-testid="flag-list"></ul>
       </div>
 
@@ -77,25 +77,25 @@ const TEMPLATE = `
       <section class="step" aria-labelledby="checkin-heading">
         <div class="step-head">
           <div>
-            <p class="step-kicker">Step 2</p>
-            <h3 id="checkin-heading">Check-in</h3>
+            <p class="step-kicker">第 2 步</p>
+            <h3 id="checkin-heading">签到</h3>
           </div>
         </div>
-        <p class="hint">Coordinates are compared with the hospital's registered base point (500 m limit). The timestamp comes from the server.</p>
+        <p class="hint">坐标与医院登记基准点比对（阈值 500 米）。时间戳由服务端生成。</p>
         <p class="record" data-checkin-record hidden></p>
         <form class="geo-form" data-checkin-form data-testid="checkin-form">
           <div class="field">
-            <label for="checkin-lat">Latitude</label>
+            <label for="checkin-lat">纬度</label>
             <input id="checkin-lat" data-testid="checkin-lat" type="number" step="any" min="-90" max="90" required aria-describedby="checkin-distance">
           </div>
           <div class="field">
-            <label for="checkin-lng">Longitude</label>
+            <label for="checkin-lng">经度</label>
             <input id="checkin-lng" data-testid="checkin-lng" type="number" step="any" min="-180" max="180" required aria-describedby="checkin-distance">
           </div>
           <p class="distance-hint" id="checkin-distance" data-checkin-distance data-testid="distance-hint" aria-live="polite"></p>
           <div data-checkin-banner></div>
           <div class="form-actions">
-            <button class="btn btn-primary" type="submit" data-testid="checkin-submit">Check in</button>
+            <button class="btn btn-primary" type="submit" data-testid="checkin-submit">签到</button>
             <span class="hint" data-checkin-hint></span>
           </div>
         </form>
@@ -104,26 +104,26 @@ const TEMPLATE = `
       <section class="step" aria-labelledby="checkout-heading">
         <div class="step-head">
           <div>
-            <p class="step-kicker">Step 4</p>
-            <h3 id="checkout-heading">Check-out</h3>
+            <p class="step-kicker">第 4 步</p>
+            <h3 id="checkout-heading">签退</h3>
           </div>
         </div>
-        <p class="hint">Check-out closes the stay. The server derives the duration and re-evaluates both locations.</p>
+        <p class="hint">签退结束本次停留。服务端计算时长，并重新校验签到点与签退点。</p>
         <p class="record" data-checkout-record hidden></p>
-        <p class="duration-line">Derived duration: <strong class="duration-value" data-duration-value data-testid="duration-value">—</strong> <span class="hint" data-duration-note></span></p>
+        <p class="duration-line">服务端计算时长：<strong class="duration-value" data-duration-value data-testid="duration-value">—</strong> <span class="hint" data-duration-note></span></p>
         <form class="geo-form" data-checkout-form data-testid="checkout-form">
           <div class="field">
-            <label for="checkout-lat">Latitude</label>
+            <label for="checkout-lat">纬度</label>
             <input id="checkout-lat" data-testid="checkout-lat" type="number" step="any" min="-90" max="90" required aria-describedby="checkout-distance">
           </div>
           <div class="field">
-            <label for="checkout-lng">Longitude</label>
+            <label for="checkout-lng">经度</label>
             <input id="checkout-lng" data-testid="checkout-lng" type="number" step="any" min="-180" max="180" required aria-describedby="checkout-distance">
           </div>
           <p class="distance-hint" id="checkout-distance" data-checkout-distance data-testid="checkout-distance-hint" aria-live="polite"></p>
           <div data-checkout-banner></div>
           <div class="form-actions">
-            <button class="btn btn-primary" type="submit" data-testid="checkout-submit">Check out</button>
+            <button class="btn btn-primary" type="submit" data-testid="checkout-submit">签退</button>
             <span class="hint" data-checkout-hint></span>
           </div>
         </form>
@@ -132,33 +132,33 @@ const TEMPLATE = `
       <section class="step" aria-labelledby="report-heading">
         <div class="step-head">
           <div>
-            <p class="step-kicker">Step 5</p>
-            <h3 id="report-heading">Call report</h3>
+            <p class="step-kicker">第 5 步</p>
+            <h3 id="report-heading">拜访记录</h3>
           </div>
         </div>
         <form class="report-form" data-report-form data-testid="report-form">
           <div class="field">
-            <label for="report-talking-points">Talking points</label>
+            <label for="report-talking-points">谈话要点</label>
             <textarea id="report-talking-points" data-testid="report-talking-points" rows="3" maxlength="4000"></textarea>
           </div>
           <div class="field">
-            <label for="report-feedback">HCP feedback</label>
+            <label for="report-feedback">医生反馈</label>
             <textarea id="report-feedback" data-testid="report-feedback" rows="3" maxlength="4000"></textarea>
           </div>
           <label class="checkbox">
             <input type="checkbox" data-testid="report-materials-distributed" data-materials-distributed>
-            <span>Material distributed</span>
+            <span>已派发资料</span>
           </label>
           <div class="materials" data-materials-block hidden>
             <div class="materials-head">
-              <span class="materials-title">Materials</span>
-              <button class="btn btn-small" type="button" data-testid="report-material-add" data-material-add>Add material</button>
+              <span class="materials-title">资料</span>
+              <button class="btn btn-small" type="button" data-testid="report-material-add" data-material-add>添加资料</button>
             </div>
             <div class="materials-list" data-material-rows></div>
           </div>
           <div data-report-banner></div>
           <div class="form-actions">
-            <button class="btn btn-primary" type="submit" data-testid="report-submit">Submit call report</button>
+            <button class="btn btn-primary" type="submit" data-testid="report-submit">提交拜访记录</button>
             <span class="hint" data-report-hint></span>
           </div>
         </form>
@@ -167,20 +167,20 @@ const TEMPLATE = `
       <section class="card detail-card" data-terminal-card aria-labelledby="terminal-heading">
         <div class="step-head">
           <div>
-            <p class="step-kicker">End the visit early</p>
-            <h3 id="terminal-heading">Cancel or void</h3>
+            <p class="step-kicker">提前结束这次拜访</p>
+            <h3 id="terminal-heading">取消或作废</h3>
           </div>
         </div>
         <p class="hint" data-terminal-hint></p>
         <div class="field">
-          <label for="terminal-reason">Reason (required for cancel and void)</label>
+          <label for="terminal-reason">原因（取消与作废必填）</label>
           <textarea id="terminal-reason" data-testid="terminal-reason" rows="2" maxlength="500"></textarea>
         </div>
         <div data-terminal-banner></div>
         <div class="form-actions">
-          <button class="btn btn-small" type="button" data-testid="cancel-submit" data-cancel-submit>Cancel plan</button>
-          <button class="btn btn-small" type="button" data-testid="void-submit" data-void-submit>Void visit</button>
-          <button class="btn btn-small btn-danger" type="button" data-testid="delete-submit" data-delete-submit>Delete plan</button>
+          <button class="btn btn-small" type="button" data-testid="cancel-submit" data-cancel-submit>取消计划</button>
+          <button class="btn btn-small" type="button" data-testid="void-submit" data-void-submit>作废拜访</button>
+          <button class="btn btn-small btn-danger" type="button" data-testid="delete-submit" data-delete-submit>删除计划</button>
         </div>
       </section>
     </div>
@@ -201,15 +201,15 @@ function readPosition(latInput: HTMLInputElement, lngInput: HTMLInputElement): P
 
 function distanceText(latInput: HTMLInputElement, lngInput: HTMLInputElement, visit: Visit): string {
   if (latInput.value.trim() === '' || lngInput.value.trim() === '') {
-    return 'Enter both coordinates to see the distance from the hospital base.';
+    return '填入经纬度后显示与医院基准点的距离。';
   }
   const lat = Number.parseFloat(latInput.value);
   const lng = Number.parseFloat(lngInput.value);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-    return 'Enter valid numeric coordinates to see the distance.';
+    return '填入合法数字后显示距离。';
   }
   if (!Number.isFinite(visit.baseLat) || !Number.isFinite(visit.baseLng)) {
-    return 'Hospital base coordinates are unavailable.';
+    return '医院基准坐标不可用。';
   }
   const meters = haversineMeters({ lat, lng }, { lat: visit.baseLat, lng: visit.baseLng });
   if (meters > LOCATION_LIMIT_METERS) {
@@ -426,7 +426,7 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     if (visit.abnormal) {
       if (visit.flags.length === 0) {
         const item = el('li', 'flag-item');
-        item.append(el('span', 'flag-detail', 'The server marked this visit abnormal.'));
+        item.append(el('span', 'flag-detail', '服务端把这次拜访标记为异常。'));
         flagList.append(item);
       } else {
         for (const flag of visit.flags) {
@@ -445,31 +445,31 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     } else if (visit.status === 'CHECKED_OUT' || visit.status === 'REPORTED') {
       complianceNote.hidden = false;
       complianceNote.className = 'compliance-note ok';
-      complianceNote.textContent = 'No compliance flags were raised at check-out.';
+      complianceNote.textContent = '签退时未命中任何合规规则。';
     } else {
       complianceNote.hidden = false;
       complianceNote.className = 'compliance-note';
-      complianceNote.textContent = 'Compliance is evaluated when the visit is checked out.';
+      complianceNote.textContent = '合规判定在签退时执行。';
     }
 
     renderTimeline(visit.status);
     metaLine.textContent = `Planned ${formatDateTime(visit.plannedAt)} · MR ${visit.mrName}`;
 
     if (visit.checkin) {
-      renderRecord(checkinRecord, 'Checked in', visit.checkin);
+      renderRecord(checkinRecord, '已签到', visit.checkin);
     } else {
       checkinRecord.hidden = true;
       checkinRecord.textContent = '';
     }
 
     if (visit.checkout) {
-      renderRecord(checkoutRecord, 'Checked out', visit.checkout);
+      renderRecord(checkoutRecord, '已签退', visit.checkout);
       durationValue.textContent = formatDuration(visit.durationSeconds ?? 0);
       durationNote.textContent = 'computed by the server';
     } else {
       checkoutRecord.hidden = true;
       checkoutRecord.textContent = '';
-      durationValue.textContent = 'Not yet available';
+      durationValue.textContent = '尚未产生';
       durationNote.textContent = 'derived at check-out';
     }
 
@@ -490,17 +490,17 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     if (visit.capabilities.canCheckIn) {
       checkinHint.textContent = 'Uses the server clock; coordinates are stored as entered.';
     } else if (visit.checkin) {
-      checkinHint.textContent = 'Check-in already recorded.';
+      checkinHint.textContent = '已记录签到。';
     } else {
-      checkinHint.textContent = 'Check-in is unavailable in this state.';
+      checkinHint.textContent = '当前状态不可签到。';
     }
 
     if (visit.capabilities.canCheckOut) {
       checkoutHint.textContent = 'Uses the server clock; duration is derived server-side.';
     } else if (visit.checkout) {
-      checkoutHint.textContent = 'Check-out already recorded.';
+      checkoutHint.textContent = '已记录签退。';
     } else {
-      checkoutHint.textContent = 'Available after check-in.';
+      checkoutHint.textContent = '签到后可用。';
     }
 
     if (visit.capabilities.canReport) {
@@ -508,21 +508,21 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     } else if (visit.status === 'REPORTED') {
       reportHint.textContent = 'Report filed.';
     } else {
-      reportHint.textContent = 'Available after check-out.';
+      reportHint.textContent = '签退后可用。';
     }
 
     if (visit.capabilities.canCancel) {
-      terminalHint.textContent = 'Cancelling keeps a reason and counts as cancelled; deleting is for mistakes and only works briefly after planning.';
+      terminalHint.textContent = '取消需要填写原因，并计入取消统计；删除只用于录入错误，且仅在创建后短时间内可用。';
     } else if (visit.capabilities.canVoid) {
-      terminalHint.textContent = 'Voiding keeps the check-in evidence and re-runs the location rule, so an abnormal visit stays abnormal.';
+      terminalHint.textContent = '作废保留签到证据并重跑位置规则，异常不会被抹掉。';
     } else if (visit.status === 'VOIDED' && visit.voidReason) {
-      terminalHint.textContent = `Voided: ${visit.voidReason}`;
+      terminalHint.textContent = `已作废：${visit.voidReason}`;
     } else if (visit.status === 'CANCELLED' && visit.cancelReason) {
-      terminalHint.textContent = `Cancelled: ${visit.cancelReason}`;
+      terminalHint.textContent = `已取消：${visit.cancelReason}`;
     } else if (visit.status === 'DELETED') {
-      terminalHint.textContent = 'Deleted: the row is kept, the visit leaves every count.';
+      terminalHint.textContent = '已删除：数据仍在库中，但不进任何统计。';
     } else {
-      terminalHint.textContent = 'Nothing to cancel, void or delete in this state.';
+      terminalHint.textContent = '当前状态没有可执行的取消/作废/删除操作。';
     }
   }
 
@@ -571,7 +571,7 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     if (currentVisit === null || busy || !currentVisit.capabilities.canCancel) return;
     const reason = terminalReason.value.trim();
     if (reason === '') {
-      terminalBanner.showText('A reason is required to cancel.');
+      terminalBanner.showText('取消必须填写原因。');
       terminalReason.focus();
       return;
     }
@@ -583,7 +583,7 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     if (currentVisit === null || busy || !currentVisit.capabilities.canVoid) return;
     const reason = terminalReason.value.trim();
     if (reason === '') {
-      terminalBanner.showText('A reason is required to void a visit.');
+      terminalBanner.showText('作废必须填写原因。');
       terminalReason.focus();
       return;
     }
@@ -608,7 +608,7 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     let payloadMaterials: Material[] = [];
     if (distributed) {
       if (materials.length === 0) {
-        reportBanner.showText('Add at least one material, or untick “Material distributed”.');
+        reportBanner.showText('至少添加一条资料，或取消勾选「已派发资料」。');
         materialAdd.focus();
         return;
       }
@@ -663,8 +663,8 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
         emptyText.textContent = state.loading.selected
           ? 'Loading visit…'
           : state.errors.detail
-            ? 'This visit could not be loaded.'
-            : 'Select a visit from the list to see its details and compliance evidence.';
+            ? '该拜访加载失败。'
+            : '从左侧列表选择一条拜访，查看详情与合规证据。';
         return;
       }
 

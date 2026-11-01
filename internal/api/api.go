@@ -4,11 +4,57 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cuiju516-gif/veeva-visit-compliance/internal/domain"
 	"github.com/cuiju516-gif/veeva-visit-compliance/internal/store"
 )
+
+// Actor identifies who is making the request. There is no login (the brief does
+// not ask for one), so the client states its identity in X-Actor; the server uses
+// it to decide *which rows* are visible, and never trusts it for anything else.
+type Actor struct {
+	// MRID is empty for the administrator, who sees every rep's visits.
+	MRID string
+}
+
+// IsAdmin reports whether the actor may see all data and change configuration.
+func (a Actor) IsAdmin() bool { return a.MRID == "" }
+
+type actorKey struct{}
+
+// ActorHeader is the request header that names the actor: an MR uuid, or the
+// literal "admin".
+const ActorHeader = "X-Actor"
+
+// actorFrom returns the actor stored by the actor middleware.
+func actorFrom(ctx context.Context) Actor {
+	a, _ := ctx.Value(actorKey{}).(Actor)
+	return a
+}
+
+// withActor reads X-Actor once and puts the result on the context. A missing or
+// unknown value is treated as "admin" only when it is literally "admin";
+// anything else that does not look like an id becomes an anonymous MR, which
+// sees nothing rather than everything. Failing closed matters here: the
+// permissive default would silently turn every scoping bug into a data leak.
+func (s *Server) withActor(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw := strings.TrimSpace(r.Header.Get(ActorHeader))
+		var actor Actor
+		switch {
+		case raw == "admin":
+			actor = Actor{}
+		case raw != "":
+			actor = Actor{MRID: raw}
+		default:
+			// No header: behave like a rep with no id, i.e. see nothing.
+			actor = Actor{MRID: "00000000-0000-0000-0000-000000000000"}
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, actor)))
+	})
+}
 
 // Server wires the HTTP surface to a repository.
 type Server struct {
@@ -41,7 +87,7 @@ func New(repo store.Repo, log *slog.Logger, th domain.Thresholds, assets http.Ha
 
 // Handler returns the fully wrapped handler.
 func (s *Server) Handler() http.Handler {
-	return s.recoverer(s.logger(s.mux))
+	return s.recoverer(s.logger(s.withActor(s.mux)))
 }
 
 func (s *Server) routes() {

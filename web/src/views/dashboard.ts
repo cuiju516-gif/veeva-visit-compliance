@@ -1,5 +1,5 @@
 import { el, must } from '../dom';
-import { formatMonthLabel, formatPercent, pluralize } from '../format';
+import { formatMonthLabel, formatPercent } from '../format';
 import type { AppState } from '../state';
 import type { Dashboard, MonthlyRow } from '../types';
 import { createErrorBanner } from './errorBanner';
@@ -27,10 +27,10 @@ const TEMPLATE = `
   <section class="card dashboard-card" aria-labelledby="dashboard-heading">
     <div class="card-head">
       <div>
-        <h2 id="dashboard-heading">Monthly visits by product</h2>
-        <p class="hint">Check-in months from the server. Each cell is visits (abnormal share).</p>
+        <h2 id="dashboard-heading">按产品的月度拜访</h2>
+        <p class="hint">月份来自服务端。每格为拜访次数（括号内为异常占比）。</p>
       </div>
-      <button class="btn btn-small" type="button" data-testid="dashboard-refresh" data-dashboard-refresh>Refresh</button>
+      <button class="btn btn-small" type="button" data-testid="dashboard-refresh" data-dashboard-refresh>刷新</button>
     </div>
     <div data-dashboard-banner></div>
     <div data-dashboard-content></div>
@@ -56,7 +56,7 @@ function buildTable(dashboard: Dashboard): HTMLElement {
 
   const thead = el('thead');
   const headRow = el('tr');
-  const productHead = el('th', undefined, 'Product');
+  const productHead = el('th', undefined, '药品');
   productHead.scope = 'col';
   headRow.append(productHead);
   for (const month of dashboard.months) {
@@ -93,7 +93,7 @@ function buildTable(dashboard: Dashboard): HTMLElement {
 
       const cell = el('td', 'dashboard-cell', `${visits} (${formatPercent(share)})`);
       if (share > 0) cell.classList.add('has-abnormal');
-      cell.title = `${month}: ${pluralize(visits, 'visit')}, ${abnormal} abnormal`;
+      cell.title = `${month}：${visits} 次拜访，其中异常 ${abnormal} 次`;
       cell.dataset.month = month;
       cell.dataset.visits = String(visits);
       cell.dataset.abnormal = String(abnormal);
@@ -104,7 +104,7 @@ function buildTable(dashboard: Dashboard): HTMLElement {
 
   const tfoot = el('tfoot');
   const totalRow = el('tr', 'total-row');
-  const totalLabel = el('th', undefined, 'Total');
+  const totalLabel = el('th', undefined, '合计');
   totalLabel.scope = 'row';
   totalRow.append(totalLabel);
   for (const month of dashboard.months) {
@@ -112,7 +112,7 @@ function buildTable(dashboard: Dashboard): HTMLElement {
     const share = totals.visits > 0 ? totals.abnormal / totals.visits : 0;
     const cell = el('td', 'dashboard-cell', `${totals.visits} (${formatPercent(share)})`);
     if (share > 0) cell.classList.add('has-abnormal');
-    cell.title = `${month}: ${pluralize(totals.visits, 'visit')}, ${totals.abnormal} abnormal`;
+    cell.title = `${month}：${totals.visits} 次拜访，其中异常 ${totals.abnormal} 次`;
     totalRow.append(cell);
   }
   tfoot.append(totalRow);
@@ -152,8 +152,8 @@ export function mountDashboardView(host: HTMLElement, handlers: DashboardHandler
     const totals = el('p', 'totals-line');
     totals.append(
       document.createTextNode(
-        `${dashboard.months.length} months · ${pluralize(dashboard.totalVisits, 'visit')} · ` +
-          `${dashboard.totalAbnormal} abnormal · overall abnormal share `,
+        `近 ${dashboard.months.length} 个月 · 共 ${dashboard.totalVisits} 次拜访 · ` +
+          `其中异常 ${dashboard.totalAbnormal} 次 · 整体异常率 `,
       ),
       el('strong', undefined, formatPercent(overallShare)),
       document.createTextNode('.'),
@@ -172,9 +172,9 @@ export function mountDashboardView(host: HTMLElement, handlers: DashboardHandler
         if (state.loading.dashboard) {
           renderEmpty('Loading monthly dashboard…');
         } else if (state.errors.dashboard) {
-          renderEmpty('Dashboard data could not be loaded.');
+          renderEmpty('看板数据加载失败。');
         } else {
-          renderEmpty('No dashboard data available.');
+          renderEmpty('暂无看板数据。');
         }
         rendered = null;
         return;
