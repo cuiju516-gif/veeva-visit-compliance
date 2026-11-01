@@ -9,9 +9,11 @@ proves the visit actually happened and happened compliantly:
   registered hospital coordinates.
 - **Rule engine** — automatic abnormality flags with machine-readable reasons.
 
-> Built as an AI-assisted engineering exercise. The requirements this implementation is checked
-> against are in [`docs/requirements.md`](docs/requirements.md); the static prototype used to
-> settle the requirements is in [`demo/`](demo/).
+> Built as an AI-assisted engineering exercise. The frozen baseline is
+> [`docs/需求说明.md`](docs/需求说明.md); the contract this code is checked against (schema, API,
+> function signatures, and the test that proves each acceptance point) is
+> [`docs/契约.md`](docs/契约.md). The static prototype used to settle the requirements is in
+> [`demo/`](demo/) — it is a design artefact, not this implementation.
 
 ---
 
@@ -80,8 +82,10 @@ Abnormality flags are orthogonal to the state: a `REPORTED` visit may still carr
 
 ## Compliance rules
 
-Both thresholds are configurable (`COMPLIANCE_*` env vars) and evaluated **on the server** at
-check-out; the client never supplies duration or flags.
+Both thresholds live in `rule_version` and are edited by the administrator at runtime (there are
+no `COMPLIANCE_*` environment variables any more — a second source of truth for a rule is worse
+than no configurability). Rules are evaluated **on the server** at check-out; the client never
+supplies duration or flags.
 
 | Rule code | Condition | Boundary policy |
 |---|---|---|
@@ -93,12 +97,14 @@ never out) is reported as *incomplete* rather than *compliant*.
 
 ## API
 
+Every request carries `X-Actor`: an MR uuid (that rep's rows only) or the literal `admin`
+(everything). A missing header sees *no rows* — the scope fails closed rather than open — and the
+header decides what you may **change**, not just what you can list: another rep's visit answers
+`403` on read and on every mutation.
+
 | Method | Path | Purpose |
 |---|---|---|
-> Every request carries `X-Actor`: an MR uuid (that rep's rows only) or the literal `admin`
-> (everything). No header means *no rows* — the scoping fails closed rather than open.
-
-| `GET` | `/api/catalog` | MRs, HCPs (with base coordinates), products |
+| `GET` | `/api/catalog` | Reps (self, or all for the admin), HCPs, products |
 | `POST` | `/api/visits` | Create a planned visit |
 | `POST` | `/api/visits/{id}/checkin` | `{lat,lng}` → state `CHECKED_IN` |
 | `POST` | `/api/visits/{id}/checkout` | `{lat,lng}` → duration + flags |
@@ -148,12 +154,12 @@ never out) is reported as *incomplete* rather than *compliant*.
 ```
 cmd/server/          entrypoint, wiring, graceful shutdown
 internal/domain/     pure business logic: state machine, duration, haversine, rules
-internal/store/      pgx repository + embedded SQL migrations and seed
-internal/api/        HTTP handlers, DTOs, problem+json errors
-web/                 TypeScript frontend (no framework), bundled by esbuild
-demo/                static prototype used to validate the requirements
-tools/build-web/     Go-driven frontend build; tools/commit-report/ generates the analysis
-docs/                requirements, ADRs, AI collaboration report, commit analysis
+internal/store/      pgx repository + 10 embedded SQL migrations (schema, seed, hospital, snapshots)
+internal/api/        HTTP handlers, DTOs, actor authorisation, JSON error envelope
+web/                 TypeScript frontend (no framework), bundled by esbuild into web/dist
+demo/                static prototype used to settle the requirements — a design artefact
+docs/                需求说明 (frozen baseline), 契约 (what the code is checked against),
+                     角色模型 / 作废设计 (analysis), adr/, AI 协同开发报告
 ```
 
 ## Licence

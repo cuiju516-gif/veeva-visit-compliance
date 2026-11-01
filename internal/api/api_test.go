@@ -194,7 +194,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	repo := newFakeRepo()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New(repo, log, domain.DefaultThresholds(), nil)
+	srv := New(repo, log, nil)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return &harness{t: t, server: srv, repo: repo, http: ts}

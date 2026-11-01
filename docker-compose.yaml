@@ -29,10 +29,10 @@ services:
     environment:
       PORT: "8080"
       POSTGRES_DSN: postgres://veeva:veeva@db:5432/visits?sslmode=disable
-      # Both thresholds are overridable so a reviewer can demonstrate the
-      # boundary behaviour without rebuilding.
-      COMPLIANCE_MIN_DURATION_SECONDS: "300"
-      COMPLIANCE_MAX_DISTANCE_METERS: "500"
+      # Compliance thresholds are not environment variables any more: they live
+      # in rule_version and change through /api/admin/rules at runtime. The
+      # migration seeds v1 (300 s / 500 m) on first start.
+
       TZ: Asia/Shanghai
     ports:
       - "8080:8080"

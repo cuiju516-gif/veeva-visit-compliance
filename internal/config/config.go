@@ -4,20 +4,19 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 	"strings"
 
-	"github.com/cuiju516-gif/veeva-visit-compliance/internal/domain"
 )
 
 // Config is everything the process needs, read once at boot.
 //
-// Configuration errors are fatal on purpose: a typo in a threshold that
-// silently defaulted would mean a compliance rule running at the wrong limit.
+// The compliance thresholds are deliberately *not* here any more: they live in
+// rule_version and change at runtime through the admin API. Environment
+// variables would have been a second source of truth, and the one thing this
+// system must not have is two answers to "what is the minimum stay".
 type Config struct {
 	Port        string
 	PostgresDSN string
-	Thresholds  domain.Thresholds
 	LogLevel    slog.Level
 }
 
@@ -26,30 +25,11 @@ func Load() (Config, error) {
 	c := Config{
 		Port:        env("PORT", "8080"),
 		PostgresDSN: env("POSTGRES_DSN", ""),
-		Thresholds:  domain.DefaultThresholds(),
 		LogLevel:    slog.LevelInfo,
 	}
 
 	if c.PostgresDSN == "" {
 		return c, fmt.Errorf("POSTGRES_DSN is required")
-	}
-
-	if raw := os.Getenv("COMPLIANCE_MIN_DURATION_SECONDS"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil {
-			return c, fmt.Errorf("COMPLIANCE_MIN_DURATION_SECONDS: %w", err)
-		}
-		c.Thresholds.MinDurationSeconds = n
-	}
-	if raw := os.Getenv("COMPLIANCE_MAX_DISTANCE_METERS"); raw != "" {
-		f, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
-			return c, fmt.Errorf("COMPLIANCE_MAX_DISTANCE_METERS: %w", err)
-		}
-		c.Thresholds.MaxDistanceMeters = f
-	}
-	if err := c.Thresholds.Validate(); err != nil {
-		return c, err
 	}
 
 	switch strings.ToLower(env("LOG_LEVEL", "info")) {

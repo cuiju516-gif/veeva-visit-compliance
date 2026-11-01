@@ -50,7 +50,7 @@ func run() error {
 	}
 	defer repo.Close()
 
-	srv := api.New(repo, log, cfg.Thresholds, webui.Handler())
+	srv := api.New(repo, log, webui.Handler())
 
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -64,8 +64,7 @@ func run() error {
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", httpServer.Addr,
-			"min_duration_s", cfg.Thresholds.MinDurationSeconds,
-			"max_distance_m", cfg.Thresholds.MaxDistanceMeters)
+			"rules", "from rule_version")
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

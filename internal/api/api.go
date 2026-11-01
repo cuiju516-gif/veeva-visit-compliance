@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cuiju516-gif/veeva-visit-compliance/internal/domain"
 	"github.com/cuiju516-gif/veeva-visit-compliance/internal/store"
 )
 
@@ -58,9 +57,8 @@ func (s *Server) withActor(next http.Handler) http.Handler {
 
 // Server wires the HTTP surface to a repository.
 type Server struct {
-	repo       store.Repo
-	log        *slog.Logger
-	thresholds domain.Thresholds
+	repo store.Repo
+	log  *slog.Logger
 
 	// now is injectable so tests can pin check-out time and therefore the
 	// derived duration, which is otherwise a moving target.
@@ -72,13 +70,12 @@ type Server struct {
 
 // New builds the server. assets may be nil when only the API is served
 // (tests, or an API-only deployment).
-func New(repo store.Repo, log *slog.Logger, th domain.Thresholds, assets http.Handler) *Server {
+func New(repo store.Repo, log *slog.Logger, assets http.Handler) *Server {
 	s := &Server{
-		repo:       repo,
-		log:        log,
-		thresholds: th,
-		now:        func() time.Time { return time.Now().UTC() },
-		assets:     assets,
+		repo:   repo,
+		log:    log,
+		now:    func() time.Time { return time.Now().UTC() },
+		assets: assets,
 	}
 	s.mux = http.NewServeMux()
 	s.routes()
