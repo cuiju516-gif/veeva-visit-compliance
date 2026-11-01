@@ -109,12 +109,23 @@ type ListParams struct {
 // RuleVersion is one row of the threshold history. The latest row is the one in
 // force; older rows exist so a past evaluation can still be explained.
 type RuleVersion struct {
-	Version            string    `json:"version"`
-	MinDurationSeconds int       `json:"minDurationSeconds"`
-	MaxDistanceMeters  float64   `json:"maxDistanceMeters"`
+	Version            string  `json:"version"`
+	MinDurationSeconds int     `json:"minDurationSeconds"`
+	MaxDistanceMeters  float64 `json:"maxDistanceMeters"`
+	// Timeouts share the version: a visit voided by the sweeper has to be
+	// explicable by "which rules were in force", exactly like a verdict.
+	TimeoutHours       int       `json:"timeoutHours"`
+	ReportTimeoutHours int       `json:"reportTimeoutHours"`
 	CreatedAt          time.Time `json:"createdAt"`
 	CreatedBy          string    `json:"createdBy"`
 	Note               string    `json:"note"`
+}
+
+// ConvergeResult reports what a read-time sweep changed, so callers (and logs)
+// can tell "nothing to do" from "two visits expired".
+type ConvergeResult struct {
+	Cancelled int
+	Voided    int
 }
 
 // Thresholds converts a version into the domain type the rule engine takes.
@@ -175,6 +186,9 @@ type Repo interface {
 	// SetRules creates a new version when the thresholds actually change, and
 	// returns the resulting version either way.
 	SetRules(ctx context.Context, th domain.Thresholds, by, note string) (RuleVersion, error)
+	// Converge applies the timeout transitions that are due. It is idempotent:
+	// running it twice in the same second changes nothing the second time.
+	Converge(ctx context.Context, now time.Time) (ConvergeResult, error)
 }
 
 // StateError means the visit exists but is not in a state that allows the

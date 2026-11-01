@@ -104,6 +104,8 @@ func (s *Server) handleGetVisit(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
+	s.converge(ctx)
+
 	rec, err := s.repo.Get(ctx, r.PathValue("id"))
 	if err != nil {
 		s.handleError(w, r, err)
@@ -119,6 +121,8 @@ func (s *Server) handleGetVisit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListVisits(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
+
+	s.converge(ctx)
 
 	actor := actorFrom(r.Context())
 	params := store.ListParams{
@@ -268,6 +272,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := s.contextWithTimeout(r)
 	defer cancel()
 
+	s.converge(ctx)
 	dash, err := s.repo.Dashboard(ctx, months, actorFrom(r.Context()).MRID)
 	if err != nil {
 		s.handleError(w, r, err)

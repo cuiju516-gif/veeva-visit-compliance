@@ -117,6 +117,23 @@ func (s *Server) routes() {
 	}
 }
 
+// converge runs the timeout sweep before a read.
+//
+// It is deliberate that failures here are logged and swallowed: refusing to
+// serve the list because the sweep hiccuped would take the app down for a
+// maintenance operation that will be retried on the next request anyway. The
+// sweep is idempotent, so "try again later" is a correct recovery.
+func (s *Server) converge(ctx context.Context) {
+	result, err := s.repo.Converge(ctx, s.now())
+	if err != nil {
+		s.log.Warn("timeout sweep failed", "err", err)
+		return
+	}
+	if result.Cancelled > 0 || result.Voided > 0 {
+		s.log.Info("timeout sweep", "cancelled", result.Cancelled, "voided", result.Voided)
+	}
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "field-visit-compliance"})
 }

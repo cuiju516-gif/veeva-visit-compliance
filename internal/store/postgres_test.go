@@ -708,3 +708,90 @@ func TestDashboardBucketsPartition(t *testing.T) {
 		t.Fatalf("deleted visit is not in DELETED state")
 	}
 }
+
+// TestConvergeExpiresBothEdges covers the two system transitions against the
+// real schema, and the fact that running the sweep twice changes nothing.
+func TestConvergeExpiresBothEdges(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	cat, err := repo.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	hcp := cat.HCPs[0]
+	mr := pickMR(t, repo, cat)
+	now := time.Now().UTC()
+
+	rules, err := repo.CurrentRules(ctx)
+	if err != nil {
+		t.Fatalf("rules: %v", err)
+	}
+	timeout := time.Duration(rules.TimeoutHours) * time.Hour
+
+	mk := func() string {
+		rec, err := repo.Create(ctx, CreateParams{
+			MRID: mr.ID, HCPID: hcp.ID, ProductID: cat.Products[0].ID,
+			PlannedAt: time.Now().Add(72 * time.Hour),
+		})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = repo.pool.Exec(context.Background(), "DELETE FROM visit WHERE id = $1", rec.Visit.ID)
+		})
+		return rec.Visit.ID
+	}
+
+	// A plan that expired: backdate it past the timeout.
+	plan := mk()
+	if _, err := repo.pool.Exec(ctx,
+		"UPDATE visit SET planned_at = $2 WHERE id = $1", plan, now.Add(-timeout-time.Hour)); err != nil {
+		t.Fatalf("backdate plan: %v", err)
+	}
+
+	// A visit checked in and abandoned.
+	visit := mk()
+	if _, err := repo.CheckIn(ctx, visit, now.Add(-timeout-time.Hour),
+		domain.Coordinates{Lat: hcp.BaseLat, Lng: hcp.BaseLng}); err != nil {
+		t.Fatalf("check-in: %v", err)
+	}
+
+	out, err := repo.Converge(ctx, now)
+	if err != nil {
+		t.Fatalf("converge: %v", err)
+	}
+	if out.Cancelled < 1 || out.Voided < 1 {
+		t.Fatalf("sweep did not expire both edges: %+v", out)
+	}
+
+	planRec, err := repo.Get(ctx, plan)
+	if err != nil {
+		t.Fatalf("get plan: %v", err)
+	}
+	if planRec.Visit.Status != domain.StatusCancelled || planRec.Visit.CancelReason == "" {
+		t.Fatalf("expired plan: status=%s reason=%q", planRec.Visit.Status, planRec.Visit.CancelReason)
+	}
+
+	visitRec, err := repo.Get(ctx, visit)
+	if err != nil {
+		t.Fatalf("get visit: %v", err)
+	}
+	if visitRec.Visit.Status != domain.StatusVoided {
+		t.Fatalf("abandoned visit: status=%s", visitRec.Visit.Status)
+	}
+	if visitRec.Visit.VoidCause != domain.VoidCauseTimeout {
+		t.Fatalf("void cause = %q, want TIMEOUT", visitRec.Visit.VoidCause)
+	}
+	if visitRec.Visit.Evaluation == nil || visitRec.Visit.Evaluation.Source != "void_backfill" {
+		t.Fatalf("system void must leave the same evidence a manual one does")
+	}
+
+	// Idempotent: the second sweep finds nothing.
+	again, err := repo.Converge(ctx, now)
+	if err != nil {
+		t.Fatalf("second converge: %v", err)
+	}
+	if again.Cancelled != 0 || again.Voided != 0 {
+		t.Fatalf("sweep is not idempotent: %+v", again)
+	}
+}

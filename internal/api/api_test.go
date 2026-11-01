@@ -999,6 +999,36 @@ func (f *fakeRepo) CurrentRules(ctx context.Context) (store.RuleVersion, error) 
 	return f.rules(), nil
 }
 
+func (f *fakeRepo) Converge(ctx context.Context, now time.Time) (store.ConvergeResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rules := f.rule
+	var out store.ConvergeResult
+	for _, rec := range f.records {
+		switch rec.Visit.Status {
+		case domain.StatusPlanned:
+			if rec.Visit.PlannedAt.Add(time.Duration(rules.TimeoutHours) * time.Hour).Before(now) {
+				at := now
+				rec.Visit.Status = domain.StatusCancelled
+				rec.Visit.CancelReason = "超时未签到（系统代取消）"
+				rec.Visit.CancelledAt = &at
+				out.Cancelled++
+			}
+		case domain.StatusCheckedIn:
+			if rec.Visit.CheckinAt != nil &&
+				rec.Visit.CheckinAt.Add(time.Duration(rules.TimeoutHours)*time.Hour).Before(now) {
+				at := now
+				rec.Visit.Status = domain.StatusVoided
+				rec.Visit.VoidReason = "超时未签退（系统作废）"
+				rec.Visit.VoidCause = domain.VoidCauseTimeout
+				rec.Visit.VoidedAt = &at
+				out.Voided++
+			}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeRepo) SetRules(ctx context.Context, th domain.Thresholds, by, note string) (store.RuleVersion, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1013,4 +1043,59 @@ func (f *fakeRepo) SetRules(ctx context.Context, th domain.Thresholds, by, note 
 		Note:               note,
 	}
 	return f.rule, nil
+}
+
+func TestTimeoutSweepOnRead(t *testing.T) {
+	h := newHarness(t)
+
+	// A plan whose time passed long ago, and a visit checked in and abandoned.
+	old := domain.Visit{
+		ID: "stale-plan", MRID: "mr-1", HCPID: "hcp-1", ProductID: "prod-1",
+		PlannedAt: time.Now().Add(-48 * time.Hour), Status: domain.StatusPlanned,
+		CreatedAt: time.Now().Add(-49 * time.Hour), UpdatedAt: time.Now().Add(-49 * time.Hour), Version: 1,
+	}
+	h.repo.records[old.ID] = &store.Record{Visit: old, MRName: "张伟"}
+
+	checkin := time.Now().Add(-30 * time.Hour)
+	stale := domain.Visit{
+		ID: "stale-visit", MRID: "mr-1", HCPID: "hcp-1", ProductID: "prod-1",
+		PlannedAt: time.Now().Add(-31 * time.Hour), Status: domain.StatusCheckedIn,
+		CheckinAt: &checkin, CheckinPos: &domain.Coordinates{Lat: 31.2119, Lng: 121.4661},
+		CreatedAt: time.Now().Add(-32 * time.Hour), UpdatedAt: time.Now().Add(-32 * time.Hour), Version: 2,
+	}
+	h.repo.records[stale.ID] = &store.Record{
+		Visit: stale, MRName: "张伟", HospitalBase: domain.Coordinates{Lat: 31.2119, Lng: 121.4661},
+	}
+
+	// Reading is what applies the sweep.
+	resp, raw := h.doAs("mr-1", http.MethodGet, "/api/visits", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list: status %d body %s", resp.StatusCode, raw)
+	}
+
+	plan := h.repo.records["stale-plan"].Visit
+	if plan.Status != domain.StatusCancelled {
+		t.Fatalf("stale plan is %s, want CANCELLED", plan.Status)
+	}
+	if plan.CancelReason == "" {
+		t.Fatalf("system cancellation must record why")
+	}
+
+	visit := h.repo.records["stale-visit"].Visit
+	if visit.Status != domain.StatusVoided {
+		t.Fatalf("abandoned visit is %s, want VOIDED", visit.Status)
+	}
+	if visit.VoidCause != domain.VoidCauseTimeout {
+		t.Fatalf("void cause = %q, want TIMEOUT", visit.VoidCause)
+	}
+
+	// Second read: nothing left to do. This is the property that makes a
+	// read-time sweep safe.
+	second, err := h.repo.Converge(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if second.Cancelled != 0 || second.Voided != 0 {
+		t.Fatalf("sweep is not idempotent: %+v", second)
+	}
 }

@@ -860,11 +860,13 @@ func (p *Postgres) Delete(ctx context.Context, id string, now time.Time) (Record
 func (p *Postgres) CurrentRules(ctx context.Context) (RuleVersion, error) {
 	var r RuleVersion
 	err := p.pool.QueryRow(ctx, `
-		SELECT version, min_duration_sec, max_distance_m, created_at, created_by, note
+		SELECT version, min_duration_sec, max_distance_m, timeout_hours, report_timeout_hours,
+		       created_at, created_by, note
 		  FROM rule_version
 		 ORDER BY created_at DESC, version DESC
 		 LIMIT 1`).
-		Scan(&r.Version, &r.MinDurationSeconds, &r.MaxDistanceMeters, &r.CreatedAt, &r.CreatedBy, &r.Note)
+		Scan(&r.Version, &r.MinDurationSeconds, &r.MaxDistanceMeters,
+			&r.TimeoutHours, &r.ReportTimeoutHours, &r.CreatedAt, &r.CreatedBy, &r.Note)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RuleVersion{}, ErrNotFound
 	}
@@ -934,13 +936,89 @@ func (p *Postgres) SetRules(ctx context.Context, th domain.Thresholds, by, note 
 func (p *Postgres) currentRulesTx(ctx context.Context, tx pgx.Tx) (RuleVersion, error) {
 	var r RuleVersion
 	err := tx.QueryRow(ctx, `
-		SELECT version, min_duration_sec, max_distance_m, created_at, created_by, note
+		SELECT version, min_duration_sec, max_distance_m, timeout_hours, report_timeout_hours,
+		       created_at, created_by, note
 		  FROM rule_version
 		 ORDER BY created_at DESC, version DESC
 		 LIMIT 1`).
-		Scan(&r.Version, &r.MinDurationSeconds, &r.MaxDistanceMeters, &r.CreatedAt, &r.CreatedBy, &r.Note)
+		Scan(&r.Version, &r.MinDurationSeconds, &r.MaxDistanceMeters,
+			&r.TimeoutHours, &r.ReportTimeoutHours, &r.CreatedAt, &r.CreatedBy, &r.Note)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RuleVersion{}, ErrNotFound
 	}
 	return r, err
+}
+
+// Converge applies the timeout transitions that are due.
+//
+// There is no background job: the sweep runs at the start of every read, which
+// means "the database is correct" and "someone looked at it" are the same
+// statement. That is a deliberate trade (docs/契约.md §5.4): reads become
+// writes, but no visit can sit in a stale state because a cron job was down.
+//
+// Both edges are written so that a concurrent reader cannot double-apply them:
+// the plan edge is a single conditional UPDATE, and the visit edge takes its
+// candidates with FOR UPDATE SKIP LOCKED.
+func (p *Postgres) Converge(ctx context.Context, now time.Time) (ConvergeResult, error) {
+	rules, err := p.CurrentRules(ctx)
+	if err != nil {
+		return ConvergeResult{}, err
+	}
+	var out ConvergeResult
+
+	// ① A plan whose time has passed by more than the timeout never happened.
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE visit
+		   SET status = 'CANCELLED',
+		       cancel_reason = '超时未签到（系统代取消）',
+		       cancelled_at = $1,
+		       version = version + 1, updated_at = now()
+		 WHERE status = 'PLANNED'
+		   AND planned_at < $1::timestamptz - ($2::int * interval '1 hour')`,
+		now, rules.TimeoutHours)
+	if err != nil {
+		return out, err
+	}
+	out.Cancelled = int(tag.RowsAffected())
+
+	// ② A visit checked in and never checked out is voided, with the same
+	// location backfill a manual void would have produced.
+	rows, err := p.pool.Query(ctx, `
+		SELECT id FROM visit
+		 WHERE status = 'CHECKED_IN'
+		   AND checkin_at < $1::timestamptz - ($2::int * interval '1 hour')
+		 ORDER BY checkin_at
+		 LIMIT 100
+		 FOR UPDATE SKIP LOCKED`,
+		now, rules.TimeoutHours)
+	if err != nil {
+		return out, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return out, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	for _, id := range ids {
+		// Reuse the manual path so a system void and a rep void produce the same
+		// evidence; only the cause differs.
+		if _, err := p.Void(ctx, id, "超时未签退（系统作废）", now); err != nil {
+			return out, err
+		}
+		if _, err := p.pool.Exec(ctx,
+			"UPDATE visit SET void_cause = $2 WHERE id = $1", id, domain.VoidCauseTimeout); err != nil {
+			return out, err
+		}
+		out.Voided++
+	}
+	return out, nil
 }
