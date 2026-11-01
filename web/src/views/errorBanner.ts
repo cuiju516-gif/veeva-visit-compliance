@@ -1,4 +1,5 @@
 import type { ApiError } from '../api';
+import { localizeApiError } from '../format';
 
 export interface ErrorBanner {
   readonly element: HTMLElement;
@@ -57,8 +58,12 @@ export function createErrorBanner(): ErrorBanner {
         render(null, '', '', '');
         return;
       }
+      // The code stays visible (it is what you search the logs for); the sentence
+      // is ours, because an English server message in a Chinese UI reads like a
+      // crash rather than like an answer.
       const fieldText = error.field ? `field: ${error.field}` : '';
-      render(`api:${error.code}:${fieldText}:${error.message}`, error.code, fieldText, error.message);
+      const text = localizeApiError(error.code, error.message, error.field);
+      render(`api:${error.code}:${fieldText}:${text}`, error.code, fieldText, text);
     },
     showText: (text) => {
       render(`text:${text}`, '', '', text);

@@ -11,6 +11,7 @@ import {
   formatShortDate,
   formatShortTime,
   formatMonthLabel,
+  localizeApiError,
   toDateTimeLocalValue,
   toRFC3339WithOffset,
 } from './format.ts';
@@ -92,6 +93,24 @@ equal(
   defaultPlannedLocal(new Date(2026, 9, 28, 19, 3, 0, 0)),
   '2026-10-29T10:00',
   'default planned local',
+);
+
+
+// localizeApiError ----------------------------------------------------------
+equal(
+  localizeApiError('forbidden', 'a rep may only create visits for themselves', 'mrId'),
+  '只能给自己创建拜访计划。',
+  'forbidden 403 copy',
+);
+equal(
+  localizeApiError('invalid_state', 'visit is CHECKED_IN, cannot cancel'),
+  '当前状态不能取消，只有「已计划」的拜访可以取消。',
+  'invalid_state cancel copy',
+);
+equal(
+  localizeApiError('some_new_code', 'server said something', undefined),
+  'server said something',
+  'unknown code falls back to the server message',
 );
 
 console.log(`selfcheck: ${assertions} assertions passed`);

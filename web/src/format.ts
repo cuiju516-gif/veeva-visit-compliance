@@ -142,3 +142,40 @@ export function isVisitStatus(value: string): value is VisitStatus {
     value === 'DELETED'
   );
 }
+
+/**
+ * Chinese copy for the API's stable error codes.
+ *
+ * The server messages are deliberately terse and English (they are written for
+ * whoever reads the logs, and they must not change when the UI is translated).
+ * The UI owns the wording a user sees, keyed by the stable `code`, with the
+ * server's message as a last-resort fallback so a new code is never blank.
+ */
+export function localizeApiError(code: string, message: string, field?: string): string {
+  switch (code) {
+    case 'forbidden':
+      if (field === 'mrId') return '只能给自己创建拜访计划。';
+      return '没有权限执行这个操作。';
+    case 'not_found':
+      return '这条记录不存在，可能已被删除。';
+    case 'invalid_state':
+      if (message.includes('cancel')) return '当前状态不能取消，只有「已计划」的拜访可以取消。';
+      if (message.includes('void')) return '当前状态不能作废：作废只对「已签到」开放。';
+      if (message.includes('delete')) return message.includes('window')
+        ? '删除窗口已关闭：只能在创建后 1 小时内、且距开始超过 1 小时时删除，请改为取消。'
+        : '当前状态不能删除。';
+      if (message.includes('check')) return '当前状态不允许签到或签退。';
+      if (message.includes('report')) return '当前状态不能提交记录，请先签退。';
+      return '这次操作与拜访的当前状态冲突，请刷新后重试。';
+    case 'conflict':
+      return message.includes('already checked in')
+        ? '你还有一条未签退的拜访，请先签退。'
+        : '这条拜访刚被其他人修改过，请刷新后重试。';
+    case 'validation_failed':
+      return message.startsWith('a reason is required') ? '必须填写原因。' : message;
+    case 'network_error':
+      return '网络异常，请检查连接后重试。';
+    default:
+      return message;
+  }
+}
