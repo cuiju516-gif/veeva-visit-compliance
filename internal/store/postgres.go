@@ -153,10 +153,17 @@ func (p *Postgres) Migrate(ctx context.Context) error {
 
 // visitSelect is the one projection every read uses, so a column added to the
 // schema cannot quietly appear in one endpoint and not another.
+//
+// hcp and product are deliberately *not* joined: the row carries its own
+// snapshot, so renaming or deleting master data cannot rewrite history.
+//
+// The string ends with a newline on purpose. Callers append " WHERE …" to it,
+// and a trailing "--" comment would swallow the condition: the query would then
+// have no placeholders and fail with a bewildering "expected 0 arguments".
 const visitSelect = `
 	SELECT v.id, v.mr_id, m.name,
-	       v.hcp_id, h.name, h.hospital_name, h.department, h.base_lat, h.base_lng,
-	       v.product_id, p.name,
+	       v.hcp_id, v.hcp_name, v.hospital_name, v.department, v.base_lat, v.base_lng,
+	       v.product_id, v.product_name,
 	       v.planned_at, v.status,
 	       v.checkin_at, v.checkin_lat, v.checkin_lng,
 	       v.checkout_at, v.checkout_lat, v.checkout_lng,
@@ -166,9 +173,8 @@ const visitSelect = `
 	       COALESCE(v.void_cause, ''), v.voided_at, v.deleted_at, v.reported_at,
 	       v.created_at, v.updated_at, v.version
 	FROM visit v
-	JOIN mr m      ON m.id = v.mr_id
-	JOIN hcp h     ON h.id = v.hcp_id
-	JOIN product p ON p.id = v.product_id`
+	JOIN mr m ON m.id = v.mr_id
+	`
 
 func scanVisit(row pgx.Row) (Record, error) {
 	var (
@@ -373,14 +379,19 @@ func (p *Postgres) Catalog(ctx context.Context) (Catalog, error) {
 		return cat, err
 	}
 
-	rows, err = p.pool.Query(ctx,
-		"SELECT id, name, hospital_name, department, base_lat, base_lng FROM hcp ORDER BY hospital_name, department")
+	rows, err = p.pool.Query(ctx, `
+		SELECT h.id, h.name, ho.name, h.department, ho.base_lat, ho.base_lng, ho.id
+		  FROM hcp h
+		  JOIN hospital ho ON ho.id = h.hospital_id
+		 WHERE h.deleted_at IS NULL AND h.status = 'ACTIVE'
+		   AND ho.deleted_at IS NULL AND ho.status = 'ACTIVE'
+		 ORDER BY ho.name, h.department`)
 	if err != nil {
 		return cat, err
 	}
 	for rows.Next() {
 		var h HCP
-		if err := rows.Scan(&h.ID, &h.Name, &h.HospitalName, &h.Department, &h.BaseLat, &h.BaseLng); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.HospitalName, &h.Department, &h.BaseLat, &h.BaseLng, &h.HospitalID); err != nil {
 			rows.Close()
 			return cat, err
 		}
@@ -391,7 +402,10 @@ func (p *Postgres) Catalog(ctx context.Context) (Catalog, error) {
 		return cat, err
 	}
 
-	rows, err = p.pool.Query(ctx, "SELECT id, code, name FROM product ORDER BY name")
+	rows, err = p.pool.Query(ctx, `
+		SELECT id, code, name FROM product
+		 WHERE deleted_at IS NULL AND status = 'ACTIVE'
+		 ORDER BY name`)
 	if err != nil {
 		return cat, err
 	}
@@ -409,9 +423,19 @@ func (p *Postgres) Catalog(ctx context.Context) (Catalog, error) {
 // Create inserts a planned visit (step 1).
 func (p *Postgres) Create(ctx context.Context, in CreateParams) (Record, error) {
 	var id string
+	// The snapshot is written here, once, from the master data as it stands now.
+	// Every later read uses it, so a rename or a logical delete cannot rewrite
+	// what this visit looked like when it was planned.
 	err := p.pool.QueryRow(ctx, `
-		INSERT INTO visit (mr_id, hcp_id, product_id, planned_at, status)
-		VALUES ($1, $2, $3, $4, 'PLANNED')
+		INSERT INTO visit (
+			mr_id, hcp_id, product_id, planned_at, status,
+			hcp_name, department, hospital_name, base_lat, base_lng, product_name)
+		SELECT $1, h.id, pr.id, $4, 'PLANNED',
+		       h.name, h.department, ho.name, ho.base_lat, ho.base_lng, pr.name
+		  FROM hcp h
+		  JOIN hospital ho ON ho.id = h.hospital_id
+		  JOIN product pr ON pr.id = $3
+		 WHERE h.id = $2
 		RETURNING id`,
 		in.MRID, in.HCPID, in.ProductID, in.PlannedAt).Scan(&id)
 	if err != nil {
@@ -604,14 +628,13 @@ func (p *Postgres) Dashboard(ctx context.Context, months int, mrid string) (Dash
 
 	rows, err := p.pool.Query(ctx, `
 		SELECT to_char(date_trunc('month', v.checkin_at AT TIME ZONE 'Asia/Shanghai'), 'YYYY-MM') AS month,
-		       p.id, p.name,
+		       v.product_id, v.product_name,
 		       -- DISTINCT is load-bearing: the flag join multiplies a visit by
 		       -- its number of flags, so a visit flagged for both a short stay
 		       -- and a location deviation would otherwise be counted twice.
 		       count(DISTINCT v.id) AS visits,
 		       count(DISTINCT v.id) FILTER (WHERE f.visit_id IS NOT NULL) AS abnormal
 		  FROM visit v
-		  JOIN product p ON p.id = v.product_id
 		  LEFT JOIN visit_flag f ON f.visit_id = v.id
 		 WHERE v.checkin_at IS NOT NULL
 		   AND v.checkin_at >= $1

@@ -75,9 +75,11 @@ func TestSchemaRejectsInvertedTimestamps(t *testing.T) {
 	in := cat.HCPs[0]
 	_, err = repo.pool.Exec(ctx, `
 		INSERT INTO visit (mr_id, hcp_id, product_id, planned_at, status,
+		                   hcp_name, department, hospital_name, base_lat, base_lng, product_name,
 		                   checkin_at, checkin_lat, checkin_lng,
 		                   checkout_at, checkout_lat, checkout_lng, duration_seconds)
 		VALUES ($1, $2, $3, now(), 'CHECKED_OUT',
+		        '医生', '科室', '医院', $4, $5, '药品',
 		        now(), $4, $5,
 		        now() - interval '10 minutes', $4, $5, -600)`,
 		cat.MRs[0].ID, in.ID, cat.Products[0].ID, in.BaseLat, in.BaseLng)
@@ -96,8 +98,10 @@ func TestSchemaRejectsOutOfRangeCoordinates(t *testing.T) {
 
 	_, err = repo.pool.Exec(ctx, `
 		INSERT INTO visit (mr_id, hcp_id, product_id, planned_at, status,
+		                   hcp_name, department, hospital_name, base_lat, base_lng, product_name,
 		                   checkin_at, checkin_lat, checkin_lng)
-		VALUES ($1, $2, $3, now(), 'CHECKED_IN', now(), 91.5, 121.4)`,
+		VALUES ($1, $2, $3, now(), 'CHECKED_IN',
+		        '医生', '科室', '医院', 31.2, 121.4, '药品', now(), 91.5, 121.4)`,
 		cat.MRs[0].ID, cat.HCPs[0].ID, cat.Products[0].ID)
 	if code := pgCode(err); code != "23514" {
 		t.Fatalf("expected a check violation for latitude 91.5, got %v (%q)", err, code)
@@ -118,9 +122,11 @@ func TestSchemaRejectsDurationDrift(t *testing.T) {
 	in := cat.HCPs[0]
 	_, err = repo.pool.Exec(ctx, `
 		INSERT INTO visit (mr_id, hcp_id, product_id, planned_at, status,
+		                   hcp_name, department, hospital_name, base_lat, base_lng, product_name,
 		                   checkin_at, checkin_lat, checkin_lng,
 		                   checkout_at, checkout_lat, checkout_lng, duration_seconds)
 		VALUES ($1, $2, $3, now(), 'CHECKED_OUT',
+		        '医生', '科室', '医院', $4, $5, '药品',
 		        now() - interval '1 minute', $4, $5,
 		        now(), $4, $5, 3600)`,
 		cat.MRs[0].ID, in.ID, cat.Products[0].ID, in.BaseLat, in.BaseLng)
@@ -159,8 +165,10 @@ func TestOneActiveVisitPerRep(t *testing.T) {
 	// A second active visit for the same rep, inserted directly.
 	_, err = repo.pool.Exec(ctx, `
 		INSERT INTO visit (mr_id, hcp_id, product_id, planned_at, status,
+		                   hcp_name, department, hospital_name, base_lat, base_lng, product_name,
 		                   checkin_at, checkin_lat, checkin_lng)
-		VALUES ($1, $2, $3, now(), 'CHECKED_IN', now(), 31.2119, 121.4661)`,
+		VALUES ($1, $2, $3, now(), 'CHECKED_IN',
+		        '医生', '科室', '医院', 31.2119, 121.4661, '药品', now(), 31.2119, 121.4661)`,
 		mr.ID, cat.HCPs[1].ID, cat.Products[1].ID)
 	if code := pgCode(err); code != "23505" {
 		t.Fatalf("expected a unique violation (23505), got %v (%q)", err, code)
@@ -446,4 +454,80 @@ func TestTerminalLifecycle(t *testing.T) {
 			t.Fatalf("row was physically removed")
 		}
 	})
+}
+
+// TestSnapshotSurvivesMasterDataChanges is acceptance point 9: master data is
+// logical-deleted (never removed) and history must still read correctly. The
+// only way to prove that is to change the master row and look at the visit
+// again — a fake repository cannot show it.
+func TestSnapshotSurvivesMasterDataChanges(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	cat, err := repo.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	hcp := cat.HCPs[0]
+	product := cat.Products[0]
+	mr := pickMR(t, repo, cat)
+
+	rec, err := repo.Create(ctx, CreateParams{
+		MRID: mr.ID, HCPID: hcp.ID, ProductID: product.ID,
+		PlannedAt: time.Now().Add(48 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = repo.pool.Exec(context.Background(), "DELETE FROM visit WHERE id = $1", rec.Visit.ID)
+		_, _ = repo.pool.Exec(context.Background(),
+			"UPDATE hcp SET name = $2, deleted_at = NULL WHERE id = $1", hcp.ID, hcp.Name)
+		_, _ = repo.pool.Exec(context.Background(),
+			"UPDATE product SET name = $2, deleted_at = NULL WHERE id = $1", product.ID, product.Name)
+	})
+
+	// Rename the doctor and the product, then delete both.
+	if _, err := repo.pool.Exec(ctx, "UPDATE hcp SET name = '被改过的名字' WHERE id = $1", hcp.ID); err != nil {
+		t.Fatalf("rename hcp: %v", err)
+	}
+	if _, err := repo.pool.Exec(ctx, "UPDATE product SET name = '被改过的药品' WHERE id = $1", product.ID); err != nil {
+		t.Fatalf("rename product: %v", err)
+	}
+	if _, err := repo.pool.Exec(ctx, "UPDATE hcp SET deleted_at = now() WHERE id = $1", hcp.ID); err != nil {
+		t.Fatalf("soft delete hcp: %v", err)
+	}
+	if _, err := repo.pool.Exec(ctx, "UPDATE product SET deleted_at = now() WHERE id = $1", product.ID); err != nil {
+		t.Fatalf("soft delete product: %v", err)
+	}
+
+	got, err := repo.Get(ctx, rec.Visit.ID)
+	if err != nil {
+		t.Fatalf("get after master changes: %v", err)
+	}
+	if got.HCPName != hcp.Name {
+		t.Fatalf("hcp name = %q, want the snapshot %q", got.HCPName, hcp.Name)
+	}
+	if got.ProductName != product.Name {
+		t.Fatalf("product name = %q, want the snapshot %q", got.ProductName, product.Name)
+	}
+	if got.HospitalName == "" || got.HospitalBase.Lat == 0 {
+		t.Fatalf("hospital snapshot missing: %+v", got)
+	}
+
+	// A deleted doctor must disappear from the catalog (no new visits against
+	// them), without taking the history with it.
+	after, err := repo.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("catalog after delete: %v", err)
+	}
+	for _, h := range after.HCPs {
+		if h.ID == hcp.ID {
+			t.Fatalf("deleted hcp is still offered in the catalog")
+		}
+	}
+	for _, p := range after.Products {
+		if p.ID == product.ID {
+			t.Fatalf("deleted product is still offered in the catalog")
+		}
+	}
 }

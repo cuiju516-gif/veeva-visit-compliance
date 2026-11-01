@@ -68,6 +68,9 @@ type HCP struct {
 	Department   string  `json:"department"`
 	BaseLat      float64 `json:"baseLat"`
 	BaseLng      float64 `json:"baseLng"`
+	// HospitalID is the normalised link; the three fields above are projected
+	// from it so the form does not need a second round trip.
+	HospitalID string `json:"hospitalId"`
 }
 
 // Product is the detailing target.

@@ -123,6 +123,11 @@ never out) is reported as *incomplete* rather than *compliant*.
   derived — never accepted from the client.
 - **Dashboard counts by check-in month** in `Asia/Shanghai`, and reports abnormal share rather
   than hiding non-compliant visits.
+- **Visits carry their own snapshot** of the doctor, department, hospital, base coordinates and
+  product. Reads never join master data, so renaming a doctor or taking a hospital off the list
+  cannot rewrite history; master rows are logically deleted, never removed.
+- **A hospital is its own table.** It owns the coordinate the 500 m rule depends on, so fixing a
+  wrong coordinate is one edit rather than one per doctor at that site.
 
 ## Repository layout
 
