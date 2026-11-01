@@ -119,6 +119,12 @@ header decides what you may **change**, not just what you can list: another rep'
 | `PUT` | `/api/admin/rules` | New version when the thresholds change (admin only) |
 | `GET` | `/healthz` | Liveness/readiness |
 
+## Acceptance
+
+`scripts/acceptance.sh` walks the ten acceptance criteria from `docs/需求说明.md` §12 against a
+running server, through the public API only. The last run and how to repeat it are in
+[`docs/验收记录.md`](docs/验收记录.md); the acceptance-to-test mapping is `docs/契约.md` §1.
+
 ## Design decisions
 
 - **Go + stdlib HTTP, one dependency (`pgx`).** No framework means the request path is readable
