@@ -275,7 +275,7 @@ func TestCreateVisit(t *testing.T) {
 	h := newHarness(t)
 	resp, raw := h.doAs("mr-1", http.MethodPost, "/api/visits", map[string]any{
 		"mrId": "mr-1", "hcpId": "hcp-1", "productId": "prod-1",
-		"plannedAt": "2026-11-02T10:00:00+08:00",
+		"plannedAt": time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339),
 	})
 
 	if resp.StatusCode != http.StatusCreated {
@@ -310,7 +310,7 @@ func TestCreateVisitValidation(t *testing.T) {
 	}{
 		{
 			name:  "missing hcp",
-			body:  map[string]any{"mrId": "mr-1", "productId": "prod-1", "plannedAt": "2026-11-02T10:00:00Z"},
+			body:  map[string]any{"mrId": "mr-1", "productId": "prod-1", "plannedAt": time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)},
 			field: "hcpId",
 		},
 		{
@@ -325,7 +325,7 @@ func TestCreateVisitValidation(t *testing.T) {
 		},
 		{
 			name:  "unknown field is rejected, not ignored",
-			body:  map[string]any{"mrId": "mr-1", "hcpId": "hcp-1", "productId": "prod-1", "plannedAt": "2026-11-02T10:00:00Z", "status": "REPORTED"},
+			body:  map[string]any{"mrId": "mr-1", "hcpId": "hcp-1", "productId": "prod-1", "plannedAt": time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339), "status": "REPORTED"},
 			field: "",
 		},
 	}
