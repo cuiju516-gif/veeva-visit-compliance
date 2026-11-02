@@ -137,6 +137,7 @@ header decides what you may **change**, not just what you can list: another rep'
 | [`docs/验收记录.md`](docs/验收记录.md) | 十条验收的实跑结果与复跑命令 |
 | [`docs/部署验证.md`](docs/部署验证.md) | 容器验证证据与运行时搭法 |
 | [`docs/adr/0002-data-model.md`](docs/adr/0002-data-model.md) | 数据模型的决策与陷阱 |
+| [`docs/demo.mp4`](docs/demo.mp4) | 应用演示录屏（10.8 秒）：身份切换、判定证据、规则配置、看板 |
 
 ## Acceptance
 

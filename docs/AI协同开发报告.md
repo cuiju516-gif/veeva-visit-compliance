@@ -315,7 +315,7 @@ $ git clone <repo> && go test ./...
 | ① 关键 Prompt 记录 | 本文 §2（16 条），展开版见 [`prompts.md`](prompts.md) |
 | ② AI 纠偏案例 | 本文 §3（三次：状态机 / 授权 / 定时炸弹） |
 | ③ 会话导出 + git history | 会话节选 [`ai-session.md`](ai-session.md)；git history 即仓库本身（`git log` 可从零读到实现顺序） |
-| ④ 应用 Demo 录屏 | [`demo.gif`](demo.gif)（脚本驱动真实界面截帧合成） |
+| ④ 应用 Demo 录屏 | [`demo.mp4`](demo.mp4)：10.8 秒 / 1280×800 / H.264，从**运行中的容器**里脚本驱动真实界面、按 10 fps 定频截帧后编码。同一次演示另存 [`demo.gif`](demo.gif)（6 帧摘要），因为 markdown 不能内嵌视频，GIF 能在 GitHub 上直接播放 |
 
 配套文档：`需求说明.md`（冻结基线）、`契约.md`（表/接口/函数签名 + 可追溯矩阵）、
 `角色模型.md`、`作废设计的漏洞与补丁.md`、`实现范围与改造清单.md`、
