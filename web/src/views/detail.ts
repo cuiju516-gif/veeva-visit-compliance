@@ -213,9 +213,9 @@ function distanceText(latInput: HTMLInputElement, lngInput: HTMLInputElement, vi
   }
   const meters = haversineMeters({ lat, lng }, { lat: visit.baseLat, lng: visit.baseLng });
   if (meters > LOCATION_LIMIT_METERS) {
-    return `Distance from hospital base: ${formatDistance(meters)} — outside the ${LOCATION_LIMIT_METERS} m limit.`;
+    return `距医院基准点 ${formatDistance(meters)} —— 超出 ${LOCATION_LIMIT_METERS} 米阈值。`;
   }
-  return `Distance from hospital base: ${formatDistance(meters)} — within the ${LOCATION_LIMIT_METERS} m limit.`;
+  return `距医院基准点 ${formatDistance(meters)} —— 在 ${LOCATION_LIMIT_METERS} 米阈值内。`;
 }
 
 export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): DetailView {
@@ -453,7 +453,7 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     }
 
     renderTimeline(visit.status);
-    metaLine.textContent = `Planned ${formatDateTime(visit.plannedAt)} · MR ${visit.mrName}`;
+    metaLine.textContent = `计划 ${formatDateTime(visit.plannedAt)} · 代表 ${visit.mrName}`;
 
     if (visit.checkin) {
       renderRecord(checkinRecord, '已签到', visit.checkin);
@@ -470,7 +470,7 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
       checkoutRecord.hidden = true;
       checkoutRecord.textContent = '';
       durationValue.textContent = '尚未产生';
-      durationNote.textContent = 'derived at check-out';
+      durationNote.textContent = '签退时由服务端派生';
     }
 
     checkinLat.disabled = !visit.capabilities.canCheckIn;
@@ -488,7 +488,7 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     terminalReason.disabled = !(visit.capabilities.canCancel || visit.capabilities.canVoid) || busy;
 
     if (visit.capabilities.canCheckIn) {
-      checkinHint.textContent = 'Uses the server clock; coordinates are stored as entered.';
+      checkinHint.textContent = '时间由服务端生成；坐标按输入原样保存。';
     } else if (visit.checkin) {
       checkinHint.textContent = '已记录签到。';
     } else {
@@ -496,7 +496,7 @@ export function mountDetailView(host: HTMLElement, handlers: DetailHandlers): De
     }
 
     if (visit.capabilities.canCheckOut) {
-      checkoutHint.textContent = 'Uses the server clock; duration is derived server-side.';
+      checkoutHint.textContent = '时间由服务端生成；停留时长由服务端计算。';
     } else if (visit.checkout) {
       checkoutHint.textContent = '已记录签退。';
     } else {

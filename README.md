@@ -124,6 +124,20 @@ header decides what you may **change**, not just what you can list: another rep'
 | `PUT` | `/api/admin/rules` | New version when the thresholds change (admin only) |
 | `GET` | `/healthz` | Liveness/readiness |
 
+## Documentation
+
+| 文件 | 作用 |
+|---|---|
+| [`docs/需求说明.md`](docs/需求说明.md) | 冻结的需求基线：7 状态 / 8 迁移 / 10 条验收 |
+| [`docs/契约.md`](docs/契约.md) | 表结构、接口、函数签名，以及每条验收对应哪个真实测试 |
+| [`docs/角色模型.md`](docs/角色模型.md) | 两类使用者的数据范围与权限边界 |
+| [`docs/AI协同开发报告.md`](docs/AI协同开发报告.md) | 题面要求的协同报告：Prompt 记录、三次纠偏、验证手段 |
+| [`docs/prompts.md`](docs/prompts.md) | 影响设计的几轮往返（原话展开） |
+| [`docs/ai-session.md`](docs/ai-session.md) | 会话节选 |
+| [`docs/验收记录.md`](docs/验收记录.md) | 十条验收的实跑结果与复跑命令 |
+| [`docs/部署验证.md`](docs/部署验证.md) | 容器验证证据与运行时搭法 |
+| [`docs/adr/0002-data-model.md`](docs/adr/0002-data-model.md) | 数据模型的决策与陷阱 |
+
 ## Acceptance
 
 `scripts/acceptance.sh` walks the ten acceptance criteria from `docs/需求说明.md` §12 against a
