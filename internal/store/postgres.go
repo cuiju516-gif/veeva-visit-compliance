@@ -985,17 +985,11 @@ func (p *Postgres) Converge(ctx context.Context, now time.Time) (ConvergeResult,
 	if err != nil {
 		return ConvergeResult{}, err
 	}
-
-	tx, err := p.pool.Begin(ctx)
-	if err != nil {
-		return ConvergeResult{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
 	var out ConvergeResult
 
 	// ① A plan whose time has passed by more than the timeout never happened.
-	tag, err := tx.Exec(ctx, `
+	// One statement, no locking needed: the WHERE clause is the guard.
+	tag, err := p.pool.Exec(ctx, `
 		UPDATE visit
 		   SET status = 'CANCELLED',
 		       cancel_reason = '超时未签到（系统代取消）',
@@ -1012,6 +1006,44 @@ func (p *Postgres) Converge(ctx context.Context, now time.Time) (ConvergeResult,
 	// ② A visit checked in and never checked out is voided, with the same
 	// location backfill a manual void would have produced.
 	//
+	// This edge needs Go (the rule engine runs before the write), so it is a
+	// batch loop rather than one statement. Batching is what keeps a large
+	// backlog from turning one sweep into a long transaction: after a weekend of
+	// downtime there can be thousands of expired visits, and holding every row
+	// lock until the end would block reps checking in.
+	for batch := 0; batch < convergeMaxBatches; batch++ {
+		n, err := p.convergeVisitBatch(ctx, now, rules)
+		if err != nil {
+			return out, err
+		}
+		out.Voided += n
+		if n < convergeBatchSize {
+			break
+		}
+	}
+	return out, nil
+}
+
+const (
+	// convergeBatchSize bounds how many rows one transaction touches. Small enough
+	// that the locks are held briefly; large enough that the common case is one
+	// round trip.
+	convergeBatchSize = 100
+	// convergeMaxBatches stops a sweep from running unbounded when the backlog is
+	// enormous: 10 batches per tick still drains 200 visits a minute, and the rest
+	// waits for the next tick instead of blocking readers.
+	convergeMaxBatches = 10
+)
+
+// convergeVisitBatch voids up to convergeBatchSize expired check-ins and returns
+// how many it applied.
+func (p *Postgres) convergeVisitBatch(ctx context.Context, now time.Time, rules RuleVersion) (int, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	// The locks must live in the same transaction as the writes: taking them with
 	// a bare Query releases them when the statement ends, so two sweeps could
 	// select the same row and the loser would fail on the state guard. Harmless,
@@ -1022,26 +1054,27 @@ func (p *Postgres) Converge(ctx context.Context, now time.Time) (ConvergeResult,
 		 WHERE status = 'CHECKED_IN'
 		   AND checkin_at < $1::timestamptz - ($2::int * interval '1 hour')
 		 ORDER BY checkin_at
-		 LIMIT 100
+		 LIMIT $3
 		 FOR UPDATE SKIP LOCKED`,
-		now, rules.TimeoutHours)
+		now, rules.TimeoutHours, convergeBatchSize)
 	if err != nil {
-		return out, err
+		return 0, err
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return out, err
+			return 0, err
 		}
 		ids = append(ids, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return out, err
+		return 0, err
 	}
 
+	applied := 0
 	for _, id := range ids {
 		// Reuse the manual path so a system void and a rep void produce the same
 		// evidence; only the cause differs.
@@ -1051,15 +1084,15 @@ func (p *Postgres) Converge(ctx context.Context, now time.Time) (ConvergeResult,
 				// Someone (another sweep, or the rep) got there first.
 				continue
 			}
-			return out, err
+			return applied, err
 		}
-		out.Voided++
+		applied++
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return out, err
+		return 0, err
 	}
-	return out, nil
+	return applied, nil
 }
 
 // markReportOverdue fills the derived "the report is late" flag.
