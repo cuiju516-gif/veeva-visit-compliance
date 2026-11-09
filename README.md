@@ -170,7 +170,11 @@ running server, through the public API only. The last run and how to repeat it a
   `report_timeout_hours`, so there is no column to drift out of sync with the clock.
 - **Thresholds are edited in the UI** by the administrator (a card that only renders for that
   actor); saving identical numbers returns the existing version instead of inventing one.
-- **Timeouts are applied when someone reads.** Every list/detail/dashboard request first runs an
+- **Timeouts are applied by a background sweep, with a read-time fallback.** A goroutine
+  (`internal/sweeper`, default every 30 s) runs the same idempotent converge the read path runs, so
+  a timed-out visit is `VOIDED` in the database even if nobody opens a page — a report, an export or
+  another service must not see a state that is merely unobserved. `TIMEOUT_SWEEP_INTERVAL=0`
+  disables the sweep and leaves convergence to reads. Every list/detail/dashboard request first runs an
   idempotent sweep (`Converge`): a plan past its timeout becomes CANCELLED, an abandoned check-in
   becomes VOIDED with the same evidence a manual void leaves. There is no background job, so no
   visit can sit in a stale state because a scheduler was down; the cost is that reads can write.

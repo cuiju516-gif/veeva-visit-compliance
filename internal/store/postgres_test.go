@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -793,5 +794,125 @@ func TestConvergeExpiresBothEdges(t *testing.T) {
 	}
 	if again.Cancelled != 0 || again.Voided != 0 {
 		t.Fatalf("sweep is not idempotent: %+v", again)
+	}
+}
+
+// TestSweepVoidsWithoutAnyRead is the property the read-time design could not
+// give: the row is correct even if nobody opens a page.
+//
+// It deliberately verifies through raw SQL rather than repo.Get, because Get
+// converges on the way in and would prove nothing — the point is that the state
+// was already right before anyone looked.
+func TestSweepVoidsWithoutAnyRead(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	cat, err := repo.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	mr := pickMR(t, repo, cat)
+	now := time.Now().UTC()
+
+	rules, err := repo.CurrentRules(ctx)
+	if err != nil {
+		t.Fatalf("rules: %v", err)
+	}
+	timeout := time.Duration(rules.TimeoutHours) * time.Hour
+
+	rec, err := repo.Create(ctx, CreateParams{
+		MRID: mr.ID, HCPID: cat.HCPs[0].ID, ProductID: cat.Products[0].ID,
+		PlannedAt: now.Add(72 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = repo.pool.Exec(context.Background(), "DELETE FROM visit WHERE id = $1", rec.Visit.ID)
+	})
+	if _, err := repo.CheckIn(ctx, rec.Visit.ID, now.Add(-timeout-time.Hour),
+		domain.Coordinates{Lat: cat.HCPs[0].BaseLat, Lng: cat.HCPs[0].BaseLng}); err != nil {
+		t.Fatalf("check-in: %v", err)
+	}
+
+	// What the background sweeper calls. No read of any kind happens here.
+	if _, err := repo.Converge(ctx, now); err != nil {
+		t.Fatalf("converge: %v", err)
+	}
+
+	var status, cause string
+	var voidedAt *time.Time
+	if err := repo.pool.QueryRow(ctx,
+		"SELECT status, coalesce(void_cause,''), voided_at FROM visit WHERE id = $1", rec.Visit.ID).
+		Scan(&status, &cause, &voidedAt); err != nil {
+		t.Fatalf("raw read: %v", err)
+	}
+	if status != string(domain.StatusVoided) {
+		t.Fatalf("row status = %s, want VOIDED without anyone reading", status)
+	}
+	if cause != domain.VoidCauseTimeout {
+		t.Fatalf("void cause = %q, want TIMEOUT written in the same statement", cause)
+	}
+	if voidedAt == nil {
+		t.Fatalf("voided_at not set")
+	}
+}
+
+// TestConcurrentSweepsApplyOnce: two instances sweeping at the same moment is the
+// normal case once the sweep is a background job, not an edge case.
+func TestConcurrentSweepsApplyOnce(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+	cat, err := repo.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	mr := pickMR(t, repo, cat)
+	now := time.Now().UTC()
+
+	rules, err := repo.CurrentRules(ctx)
+	if err != nil {
+		t.Fatalf("rules: %v", err)
+	}
+	timeout := time.Duration(rules.TimeoutHours) * time.Hour
+
+	rec, err := repo.Create(ctx, CreateParams{
+		MRID: mr.ID, HCPID: cat.HCPs[0].ID, ProductID: cat.Products[0].ID,
+		PlannedAt: now.Add(72 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = repo.pool.Exec(context.Background(), "DELETE FROM visit WHERE id = $1", rec.Visit.ID)
+	})
+	if _, err := repo.CheckIn(ctx, rec.Visit.ID, now.Add(-timeout-time.Hour),
+		domain.Coordinates{Lat: cat.HCPs[0].BaseLat, Lng: cat.HCPs[0].BaseLng}); err != nil {
+		t.Fatalf("check-in: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = repo.Converge(ctx, now)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent sweep %d failed: %v", i, err)
+		}
+	}
+
+	var version int
+	if err := repo.pool.QueryRow(ctx,
+		"SELECT version FROM visit WHERE id = $1", rec.Visit.ID).Scan(&version); err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	// 1 (create) + 1 (check-in) + 1 (void) — four sweeps must add exactly one.
+	if version != 3 {
+		t.Fatalf("version = %d after four concurrent sweeps, want 3 (applied once)", version)
 	}
 }

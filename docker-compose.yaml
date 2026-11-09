@@ -33,6 +33,9 @@ services:
       # in rule_version and change through /api/admin/rules at runtime. The
       # migration seeds v1 (300 s / 500 m) on first start.
       TZ: Asia/Shanghai
+      # How often the background sweep applies timeouts. 0 disables it and
+      # leaves convergence to reads, which is only right for a demo.
+      TIMEOUT_SWEEP_INTERVAL: "30s"
     ports:
       - "8080:8080"
     depends_on:

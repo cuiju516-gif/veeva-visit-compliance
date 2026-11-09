@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-
+	"time"
 )
 
 // Config is everything the process needs, read once at boot.
@@ -18,18 +18,35 @@ type Config struct {
 	Port        string
 	PostgresDSN string
 	LogLevel    slog.Level
+
+	// SweepInterval is how often the timeout sweep runs in the background.
+	// Zero disables it, which leaves convergence to the read path — acceptable
+	// for a single-user demo, not for anything that reports on the data.
+	SweepInterval time.Duration
 }
 
 // Load reads the environment, applying documented defaults.
 func Load() (Config, error) {
 	c := Config{
-		Port:        env("PORT", "8080"),
-		PostgresDSN: env("POSTGRES_DSN", ""),
-		LogLevel:    slog.LevelInfo,
+		Port:          env("PORT", "8080"),
+		PostgresDSN:   env("POSTGRES_DSN", ""),
+		LogLevel:      slog.LevelInfo,
+		SweepInterval: 30 * time.Second,
 	}
 
 	if c.PostgresDSN == "" {
 		return c, fmt.Errorf("POSTGRES_DSN is required")
+	}
+
+	if raw := os.Getenv("TIMEOUT_SWEEP_INTERVAL"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return c, fmt.Errorf("TIMEOUT_SWEEP_INTERVAL: %w", err)
+		}
+		if d < 0 {
+			return c, fmt.Errorf("TIMEOUT_SWEEP_INTERVAL: must not be negative")
+		}
+		c.SweepInterval = d
 	}
 
 	switch strings.ToLower(env("LOG_LEVEL", "info")) {

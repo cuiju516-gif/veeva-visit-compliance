@@ -756,29 +756,48 @@ func (p *Postgres) Cancel(ctx context.Context, id, reason string, at time.Time) 
 // transaction. A voided visit can leave the "completed" count, but it must not
 // take its abnormality with it — that is the whole anti-cheat design.
 func (p *Postgres) Void(ctx context.Context, id, reason string, at time.Time) (Record, error) {
-	if strings.TrimSpace(reason) == "" {
-		return Record{}, ErrReasonRequired
-	}
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return Record{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	rec, err := scanVisit(tx.QueryRow(ctx, visitSelect+" WHERE v.id = $1 FOR UPDATE OF v", id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Record{}, ErrNotFound
-	}
-	if err != nil {
+	if _, err := p.voidInTx(ctx, tx, id, reason, domain.VoidCauseManual, at); err != nil {
 		return Record{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return Record{}, err
+	}
+	return p.Get(ctx, id)
+}
+
+// voidInTx is the shared body of a manual and a timed-out void.
+//
+// The cause is a parameter rather than a follow-up UPDATE: the earlier version
+// wrote the row and then patched void_cause in a second statement, which meant a
+// crash in between produced a void with the wrong cause — an audit trail that
+// lies is worse than no audit trail.
+func (p *Postgres) voidInTx(
+	ctx context.Context, tx pgx.Tx, id, reason, cause string, at time.Time,
+) (domain.Evaluation, error) {
+	if strings.TrimSpace(reason) == "" {
+		return domain.Evaluation{}, ErrReasonRequired
+	}
+
+	rec, err := scanVisit(tx.QueryRow(ctx, visitSelect+" WHERE v.id = $1 FOR UPDATE OF v", id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Evaluation{}, ErrNotFound
+	}
+	if err != nil {
+		return domain.Evaluation{}, err
+	}
 	if rec.Visit.Status != domain.StatusCheckedIn || rec.Visit.CheckinPos == nil {
-		return Record{}, &StateError{Status: rec.Visit.Status, Action: "void"}
+		return domain.Evaluation{}, &StateError{Status: rec.Visit.Status, Action: "void"}
 	}
 
 	rules, err := p.CurrentRules(ctx)
 	if err != nil {
-		return Record{}, err
+		return domain.Evaluation{}, err
 	}
 	evaluation, err := domain.SnapshotCheckinPoint(domain.EvaluationInput{
 		Checkin:      *rec.Visit.CheckinPos,
@@ -789,12 +808,12 @@ func (p *Postgres) Void(ctx context.Context, id, reason string, at time.Time) (R
 		Source:       "void_backfill",
 	})
 	if err != nil {
-		return Record{}, err
+		return domain.Evaluation{}, err
 	}
 	flags := evaluation.Flags
 	payload, err := json.Marshal(evaluation)
 	if err != nil {
-		return Record{}, err
+		return domain.Evaluation{}, err
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -803,27 +822,23 @@ func (p *Postgres) Void(ctx context.Context, id, reason string, at time.Time) (R
 		       evaluation = $5, rule_version = $6,
 		       version = version + 1, updated_at = now()
 		 WHERE id = $1`,
-		id, reason, domain.VoidCauseManual, at, payload, rules.Version); err != nil {
-		return Record{}, err
+		id, reason, cause, at, payload, rules.Version); err != nil {
+		return domain.Evaluation{}, err
 	}
 
 	// Replace, never append: re-running a void must not accumulate evidence.
 	if _, err := tx.Exec(ctx, "DELETE FROM visit_flag WHERE visit_id = $1", id); err != nil {
-		return Record{}, err
+		return domain.Evaluation{}, err
 	}
 	for _, f := range flags {
 		if _, err := tx.Exec(ctx,
 			"INSERT INTO visit_flag (visit_id, code, detail, rule_version) VALUES ($1, $2, $3, $4)",
 			id, string(f.Code), f.Detail, rules.Version); err != nil {
-			return Record{}, err
+			return domain.Evaluation{}, err
 		}
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return Record{}, err
-	}
-	p.log.Info("visit voided", "visit", id, "backfilled_flags", len(flags))
-	return p.Get(ctx, id)
+	p.log.Info("visit voided", "visit", id, "cause", cause, "backfilled_flags", len(flags))
+	return evaluation, nil
 }
 
 // Delete is a logical delete: the row stays, the visit leaves every denominator.
@@ -970,10 +985,17 @@ func (p *Postgres) Converge(ctx context.Context, now time.Time) (ConvergeResult,
 	if err != nil {
 		return ConvergeResult{}, err
 	}
+
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return ConvergeResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	var out ConvergeResult
 
 	// ① A plan whose time has passed by more than the timeout never happened.
-	tag, err := p.pool.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		UPDATE visit
 		   SET status = 'CANCELLED',
 		       cancel_reason = '超时未签到（系统代取消）',
@@ -989,7 +1011,13 @@ func (p *Postgres) Converge(ctx context.Context, now time.Time) (ConvergeResult,
 
 	// ② A visit checked in and never checked out is voided, with the same
 	// location backfill a manual void would have produced.
-	rows, err := p.pool.Query(ctx, `
+	//
+	// The locks must live in the same transaction as the writes: taking them with
+	// a bare Query releases them when the statement ends, so two sweeps could
+	// select the same row and the loser would fail on the state guard. Harmless,
+	// but a background job retries every tick, and a warning per tick per instance
+	// is how a real problem gets buried.
+	rows, err := tx.Query(ctx, `
 		SELECT id FROM visit
 		 WHERE status = 'CHECKED_IN'
 		   AND checkin_at < $1::timestamptz - ($2::int * interval '1 hour')
@@ -1017,14 +1045,19 @@ func (p *Postgres) Converge(ctx context.Context, now time.Time) (ConvergeResult,
 	for _, id := range ids {
 		// Reuse the manual path so a system void and a rep void produce the same
 		// evidence; only the cause differs.
-		if _, err := p.Void(ctx, id, "超时未签退（系统作废）", now); err != nil {
-			return out, err
-		}
-		if _, err := p.pool.Exec(ctx,
-			"UPDATE visit SET void_cause = $2 WHERE id = $1", id, domain.VoidCauseTimeout); err != nil {
+		if _, err := p.voidInTx(ctx, tx, id, "超时未签退（系统作废）", domain.VoidCauseTimeout, now); err != nil {
+			var stateErr *StateError
+			if errors.As(err, &stateErr) {
+				// Someone (another sweep, or the rep) got there first.
+				continue
+			}
 			return out, err
 		}
 		out.Voided++
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return out, err
 	}
 	return out, nil
 }

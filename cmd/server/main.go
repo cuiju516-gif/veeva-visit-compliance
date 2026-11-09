@@ -15,6 +15,7 @@ import (
 	"github.com/cuiju516-gif/veeva-visit-compliance/internal/api"
 	"github.com/cuiju516-gif/veeva-visit-compliance/internal/config"
 	"github.com/cuiju516-gif/veeva-visit-compliance/internal/store"
+	"github.com/cuiju516-gif/veeva-visit-compliance/internal/sweeper"
 	"github.com/cuiju516-gif/veeva-visit-compliance/web"
 )
 
@@ -50,6 +51,10 @@ func run() error {
 	}
 	defer repo.Close()
 
+	// The timeout sweep runs whether or not anyone is reading: "the row is
+	// correct" must not depend on someone opening a page.
+	go sweeper.Run(ctx, repo, log, cfg.SweepInterval)
+
 	srv := api.New(repo, log, webui.Handler())
 
 	httpServer := &http.Server{
@@ -64,7 +69,8 @@ func run() error {
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", httpServer.Addr,
-			"rules", "from rule_version")
+			"rules", "from rule_version",
+			"sweep_interval", cfg.SweepInterval.String())
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
